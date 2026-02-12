@@ -1,0 +1,19 @@
+{
+  "name": "fas7ny",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "Thomas Zakaria",
+  "type": "commonjs",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "axios": "^1.13.2",
+    "dotenv": "^17.2.4",
+    "express": "^5.1.0",
+    "mongoose": "^9.0.1",
+    "multer": "^2.0.2"
+  }
+}
