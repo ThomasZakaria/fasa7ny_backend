@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const multer = require('multer');
+const axios = require('axios'); // مكتبة الربط مع Flask
 const { v2: cloudinary } = require('cloudinary');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 require('dotenv').config();
@@ -14,7 +15,7 @@ const User = require('./models/User');
 const app = express();
 
 // ==============================
-// 1. إعدادات الصور (Cloudinary) 📸
+// 1. إعدادات Cloudinary 📸
 // ==============================
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -47,8 +48,9 @@ mongoose
   .catch((err) => console.error('❌ MongoDB Atlas Error:', err));
 
 // ==============================
-// 3. Logic Helpers
+// 3. Helper Functions
 // ==============================
+
 function detectPriceLevel(price) {
   if (!price || typeof price !== 'string') return 'unknown';
   const p = price.toLowerCase();
@@ -68,10 +70,12 @@ function detectPriceLevel(price) {
 
 function priceAllowed(userChoice, placePrice) {
   if (!userChoice || userChoice === 'any') return true;
+  const choice = userChoice.toLowerCase().trim();
   const level = detectPriceLevel(placePrice);
-  if (userChoice === 'budget') return level === 'free' || level === 'budget';
-  if (userChoice === 'medium')
-    return ['free', 'budget', 'medium'].includes(level);
+  if (choice === 'free') return level === 'free';
+  if (choice === 'budget') return level === 'free' || level === 'budget';
+  if (choice === 'medium') return ['free', 'budget', 'medium'].includes(level);
+  if (choice === 'fancy') return true;
   return true;
 }
 
@@ -82,112 +86,145 @@ function recommendPlaces(user, places, limit = 10) {
   const results = [];
 
   for (const place of places) {
+    if (!priceAllowed(budget, place.price)) continue;
+
     let score = 0;
     const placeName = place['Landmark Name (English)'];
     const placeCat = place.category ? place.category.toLowerCase() : '';
     const placeLoc = place.Location ? place.Location.toLowerCase() : '';
-    const placePrice = place.price;
 
     if (safeInterests.some((interest) => placeCat.includes(interest)))
       score += 3;
     if (safeCity && placeLoc.includes(safeCity)) score += 2;
-    if (budget === 'fancy' && detectPriceLevel(placePrice) === 'fancy')
-      score += 1;
     if (placeName && history.includes(placeName)) score -= 5;
-
-    // Social Proof Boost
     if (place.averageRating && place.averageRating >= 4.5) score += 2;
-    else if (place.averageRating && place.averageRating >= 4) score += 1;
-
-    if (!priceAllowed(budget, placePrice)) continue;
 
     results.push({
       _id: place._id,
       name: placeName,
       city: place.Location,
       category: place.category,
-      price: placePrice,
-      priceLevel: detectPriceLevel(placePrice),
+      price: place.price,
       score,
       image: place.image || null,
       rating: place.averageRating || 0,
+      location: place.location,
     });
   }
   return results.sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
-async function calcAverageRatings(placeId) {
-  const stats = await Review.aggregate([
-    { $match: { place: new mongoose.Types.ObjectId(placeId) } }, // Fixed ID casting
-    {
-      $group: {
-        _id: '$place',
-        nRating: { $sum: 1 },
-        avgRating: { $avg: '$rating' },
+// ==============================
+// 4. Controllers & Routes
+// ==============================
+
+// app.js (تعديل الـ detect route)
+app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'يرجى رفع صورة' });
+
+    const imageUrl = req.file.path;
+
+    // 1. التعرف على الأثر من سيرفر البايثون
+    const pythonResponse = await axios.post('http://127.0.0.1:5000/predict', {
+      url: imageUrl,
+    });
+
+    const landmarkName = pythonResponse.data.class;
+
+    // 2. البحث عن تفاصيل هذا المكان في الداتابيز لدينا
+    const placeDetails = await Place.findOne({
+      'Landmark Name (English)': new RegExp(landmarkName, 'i'),
+    }).lean();
+
+    res.json({
+      status: 'success',
+      data: {
+        prediction: landmarkName,
+        confidence: pythonResponse.data.confidence,
+        details:
+          placeDetails ||
+          'Landmark recognized but no details found in database',
+        imageUrl: imageUrl,
       },
-    },
-  ]);
-
-  if (stats.length > 0) {
-    await Place.findByIdAndUpdate(placeId, {
-      ratingsQuantity: stats[0].nRating,
-      averageRating: stats[0].avgRating.toFixed(1),
     });
-  } else {
-    await Place.findByIdAndUpdate(placeId, {
-      ratingsQuantity: 0,
-      averageRating: 0,
+  } catch (err) {
+    res
+      .status(500)
+      .json({ message: 'خطأ في الربط مع الموديل', error: err.message });
+  }
+});
+
+// البحث والترشيح الهجين
+app.post('/api/v1/recommend-search', async (req, res) => {
+  try {
+    const { userProfile, keyword } = req.body;
+    let query = {};
+    if (keyword) {
+      const regex = new RegExp(keyword, 'i');
+      query = {
+        $or: [
+          { 'Landmark Name (English)': regex },
+          { 'Arabic Name': regex },
+          { category: regex },
+          { Location: regex },
+        ],
+      };
+    }
+    const places = await Place.find(query).lean();
+    const recommendations = recommendPlaces(userProfile, places);
+    res.json({ status: 'success', data: { recommendations } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// الأماكن القريبة
+app.get('/api/v1/places/near-me', async (req, res) => {
+  try {
+    const { lat, lng, distance } = req.query;
+    if (!lat || !lng)
+      return res.status(400).json({ message: 'Missing coordinates' });
+    const radius = distance || 10;
+    const places = await Place.find({
+      location: {
+        $near: {
+          $geometry: {
+            type: 'Point',
+            coordinates: [parseFloat(lng), parseFloat(lat)],
+          },
+          $maxDistance: radius * 1000,
+        },
+      },
     });
-  }
-}
-
-// ==============================
-// 4. Controllers
-// ==============================
-
-// ✅ Create Place with Image
-const createPlace = async (req, res) => {
-  try {
-    console.log('👉 File Received:', req.file);
-    const placeData = req.body;
-    if (req.file) placeData.image = req.file.path;
-
-    const newPlace = await Place.create(placeData);
-    res.status(201).json({ status: 'success', data: { place: newPlace } });
+    res.json({ status: 'success', results: places.length, data: { places } });
   } catch (err) {
-    res.status(400).json({ status: 'fail', message: err.message });
+    res.status(500).json({ error: err.message });
   }
-};
+});
 
-// ✅ Create User (عشان الصورة رقم 10 تشتغل)
-const createUser = async (req, res) => {
-  try {
-    const newUser = await User.create(req.body);
-    res.status(201).json({ status: 'success', data: { user: newUser } });
-  } catch (err) {
-    res.status(400).json({ status: 'fail', message: err.message });
-  }
-};
+// CRUD الأماكن
+app
+  .route('/api/v1/places')
+  .get(async (req, res) => {
+    const places = await Place.find().lean();
+    res.json({ status: 'success', results: places.length, data: { places } });
+  })
+  .post(upload.single('image'), async (req, res) => {
+    try {
+      const data = req.body;
+      if (req.file) data.image = req.file.path;
+      const newPlace = await Place.create(data);
+      res.status(201).json({ status: 'success', data: { place: newPlace } });
+    } catch (err) {
+      res.status(400).json({ message: err.message });
+    }
+  });
 
-// ✅ Add Review
-const createReview = async (req, res) => {
+// التقييمات
+app.post('/api/v1/places/:placeId/reviews', async (req, res) => {
   try {
     const { userId, rating, comment } = req.body;
-
-    // تحقق من وجود اليوزر
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: 'User not found' });
-
-    // منع التكرار
-    const existingReview = await Review.findOne({
-      place: req.params.placeId,
-      user: userId,
-    });
-    if (existingReview)
-      return res
-        .status(400)
-        .json({ message: 'You already reviewed this place' });
-
     const review = await Review.create({
       place: req.params.placeId,
       user: userId,
@@ -195,101 +232,53 @@ const createReview = async (req, res) => {
       comment,
     });
 
-    // تحديث متوسط التقييم
-    await calcAverageRatings(req.params.placeId);
+    // تحديث المتوسط (دالة calcAverageRatings المفروض تكون موجودة كـ Helper)
+    const stats = await Review.aggregate([
+      { $match: { place: new mongoose.Types.ObjectId(req.params.placeId) } },
+      {
+        $group: {
+          _id: '$place',
+          nRating: { $sum: 1 },
+          avgRating: { $avg: '$rating' },
+        },
+      },
+    ]);
+    await Place.findByIdAndUpdate(req.params.placeId, {
+      ratingsQuantity: stats[0].nRating,
+      averageRating: stats[0].avgRating.toFixed(1),
+    });
 
     res.status(201).json({ status: 'success', data: { review } });
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
-};
-
-const getAllPlaces = async (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-    const skip = (page - 1) * limit;
-    const places = await Place.find().skip(skip).limit(limit).lean();
-    const total = await Place.countDocuments();
-    res.status(200).json({
-      status: 'success',
-      results: places.length,
-      pagination: { total, page, pages: Math.ceil(total / limit) },
-      data: { places },
-    });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-};
-
-const getPlace = async (req, res) => {
-  try {
-    const place = await Place.findById(req.params._id).lean();
-    if (!place) return res.status(404).json({ message: 'Invalid ID' });
-    // هات التقييمات كمان
-    const reviews = await Review.find({ place: req.params._id });
-    res.status(200).json({ status: 'success', data: { place, reviews } });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-};
-
-// ==============================
-// 5. Routes
-// ==============================
-
-// ✅ Users (جديد: عشان تعرف تعمل يوزر للتقييم)
-app.post('/api/v1/users', createUser);
-
-// ✅ Places & Images
-app
-  .route('/api/v1/places')
-  .get(getAllPlaces)
-  .post(upload.single('image'), createPlace); // لاحظ وجود upload.single هنا
-
-// ✅ Reviews
-app.post('/api/v1/places/:placeId/reviews', createReview);
-
-// ✅ Search & Recommend
-app.get('/api/v1/places/search', async (req, res) => {
-  /* ... كود البحث القديم ... */
-});
-// (اختصاراً للمساحة، استخدم نفس كود البحث في ردك السابق فهو سليم)
-
-app.post('/api/v1/recommend-search', async (req, res) => {
-  const { userProfile, keyword } = req.body;
-  let query = {};
-  if (keyword) {
-    const regex = new RegExp(keyword, 'i');
-    query = {
-      $or: [
-        { 'Landmark Name (English)': regex },
-        { category: regex },
-        { Location: regex },
-      ],
-    };
-  }
-  const places = await Place.find(query).lean();
-  const recommendations = recommendPlaces(userProfile, places, 10);
-  res.json({
-    status: 'success',
-    results: recommendations.length,
-    data: { recommendations },
-  });
 });
 
-app
-  .route('/api/v1/places/:_id')
-  .get(getPlace)
-  .patch(async (req, res) => {
-    /* update logic */
-  })
-  .delete(async (req, res) => {
-    /* delete logic */
-  });
+// رابط إصلاح البيانات القديمة
+app.get('/api/v1/fix-data', async (req, res) => {
+  const places = await Place.find();
+  let count = 0;
+  for (const place of places) {
+    if (
+      place.Coordinates &&
+      (!place.location || !place.location.coordinates.length)
+    ) {
+      const parts = place.Coordinates.replace(/\s/g, '').split(',');
+      if (parts.length === 2) {
+        place.location = {
+          type: 'Point',
+          coordinates: [parseFloat(parts[1]), parseFloat(parts[0])],
+        };
+        await place.save();
+        count++;
+      }
+    }
+  }
+  res.json({ message: `تم إصلاح ${count} مكان` });
+});
 
 // ==============================
-// Start Server
+// 5. Server
 // ==============================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ App listening on port ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
