@@ -14,6 +14,15 @@ const placeSchema = new mongoose.Schema(
     price: String,
     price_source: String,
     'Short History Summary': String,
+
+    averageRating: {
+  type: Number,
+  default: 0,
+},
+ratingsQuantity: {
+  type: Number,
+  default: 0,
+},
   },
   {
     strict: false, // Allows fields not defined here to be saved
@@ -24,3 +33,4 @@ const placeSchema = new mongoose.Schema(
 );
 
 module.exports = mongoose.model('Place', placeSchema);
+
