@@ -1,6 +1,9 @@
 const express = require('express');
 const mongoose = require('mongoose');
-const cors = require('cors'); // Make sure to run: npm install cors
+const cors = require('cors');
+const multer = require('multer');
+const { v2: cloudinary } = require('cloudinary');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 require('dotenv').config();
 
 const Place = require('./models/Place');
@@ -8,13 +11,32 @@ const Place = require('./models/Place');
 const app = express();
 
 // ==============================
-// Middleware
+// 1. إعدادات Cloudinary و Multer ☁️
 // ==============================
-app.use(express.json());
-app.use(cors()); // Enables connection from React/Frontend
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'egypt-tour-guide',
+    allowed_formats: ['jpg', 'png', 'jpeg', 'webp'],
+  },
+});
+
+const upload = multer({ storage: storage });
 
 // ==============================
-// 1. Database Connection
+// Middleware
+// ==============================
+app.use(cors());
+app.use(express.json());
+
+// ==============================
+// 2. Database Connection
 // ==============================
 mongoose
   .connect(process.env.DATABASE_URL)
@@ -22,18 +44,14 @@ mongoose
   .catch((err) => console.error('❌ MongoDB Atlas Error:', err));
 
 // ==============================
-// 2. Helper Functions (Smart Logic)
+// Helper Functions
 // ==============================
-
 function detectPriceLevel(price) {
   if (!price || typeof price !== 'string') return 'unknown';
   const p = price.toLowerCase();
-
   if (p.includes('free')) return 'free';
   if (p.includes('budget')) return 'budget';
   if (p.includes('medium')) return 'medium';
-
-  // Extract numbers (e.g. "50 EGP")
   const numbers = p.match(/\d+/g);
   if (numbers && numbers.length > 0) {
     const val = parseInt(numbers[0]);
@@ -48,68 +66,45 @@ function detectPriceLevel(price) {
 function priceAllowed(userChoice, placePrice) {
   if (!userChoice || userChoice === 'any') return true;
   const level = detectPriceLevel(placePrice);
-
   if (userChoice === 'budget') return level === 'free' || level === 'budget';
   if (userChoice === 'medium')
     return ['free', 'budget', 'medium'].includes(level);
-  if (userChoice === 'fancy') return true; // Fancy users can see everything
+  if (userChoice === 'fancy') return true;
   return true;
 }
 
 function recommendPlaces(user, places, limit = 10) {
   const { interests = [], history = [], latest_city, budget } = user;
-
-  // 1. Normalize User Inputs (Lowercase)
   const safeInterests = interests.map((i) => i.toLowerCase());
   const safeCity = latest_city ? latest_city.toLowerCase() : '';
-
   const results = [];
 
   for (const place of places) {
     let score = 0;
-
-    // 2. Normalize Place Data
     const placeName = place['Landmark Name (English)'];
     const placeCat = place.category ? place.category.toLowerCase() : '';
     const placeLoc = place.Location ? place.Location.toLowerCase() : '';
     const placePrice = place.price;
 
-    // --- Scoring Logic ---
-
-    // A. Interest Match (Partial & Case Insensitive)
-    // Example: User interest "mosque" will match category "Historical Mosques"
-    const isInterested = safeInterests.some((interest) =>
-      placeCat.includes(interest),
-    );
-    if (isInterested) score += 3;
-
-    // B. Location Match
+    if (safeInterests.some((interest) => placeCat.includes(interest)))
+      score += 3;
     if (safeCity && placeLoc.includes(safeCity)) score += 2;
-
-    // C. Budget Bonus
-    // If user is 'fancy' and place is 'fancy', give extra points
-    const pLevel = detectPriceLevel(placePrice);
-    if (budget === 'fancy' && pLevel === 'fancy') score += 1;
-
-    // D. Demote History
+    if (budget === 'fancy' && detectPriceLevel(placePrice) === 'fancy')
+      score += 1;
     if (placeName && history.includes(placeName)) score -= 5;
-
-    // --- Filtering ---
     if (!priceAllowed(budget, placePrice)) continue;
 
     results.push({
       _id: place._id,
       name: placeName,
-      city: place.Location, // Return original Case
-      category: place.category, // Return original Case
+      city: place.Location,
+      category: place.category,
       price: placePrice,
-      priceLevel: pLevel,
+      priceLevel: detectPriceLevel(placePrice),
       score,
       image: place.image || null,
     });
   }
-
-  // Sort by Score (High to Low)
   return results.sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
@@ -117,16 +112,34 @@ function recommendPlaces(user, places, limit = 10) {
 // 3. Controllers
 // ==============================
 
-// Get All (Pagination)
+const createPlace = async (req, res) => {
+  try {
+    // 👇 هذا السطر سيخبرنا بالحقيقة: هل بوستمان يرسل النوع الصحيح؟
+    console.log('👉 Header Content-Type:', req.headers['content-type']);
+    console.log('👉 Body (Text):', req.body);
+    console.log('👉 File (Image):', req.file);
+
+    const placeData = req.body || {}; // حماية من الـ undefined
+
+    if (req.file) {
+      placeData.image = req.file.path;
+    }
+
+    const newPlace = await Place.create(placeData);
+    res.status(201).json({ status: 'success', data: { place: newPlace } });
+  } catch (err) {
+    console.error('❌ Error:', err.message);
+    res.status(400).json({ status: 'fail', message: err.message });
+  }
+};
+
 const getAllPlaces = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
-
     const places = await Place.find().skip(skip).limit(limit).lean();
     const total = await Place.countDocuments();
-
     res.status(200).json({
       status: 'success',
       results: places.length,
@@ -145,15 +158,6 @@ const getPlace = async (req, res) => {
     res.status(200).json({ status: 'success', data: { place } });
   } catch (err) {
     res.status(500).json({ status: 'error', message: err.message });
-  }
-};
-
-const createPlace = async (req, res) => {
-  try {
-    const newPlace = await Place.create(req.body);
-    res.status(201).json({ status: 'success', data: { place: newPlace } });
-  } catch (err) {
-    res.status(400).json({ status: 'fail', message: err.message });
   }
 };
 
@@ -183,12 +187,14 @@ const deletePlace = async (req, res) => {
 // 4. Routes
 // ==============================
 
-// Search
+// ✅ Route الصور (يجب أن يكون منفصلاً)
+app.post('/api/v1/places', upload.single('image'), createPlace);
+
+// ✅ Route البحث والاقتراحات
 app.get('/api/v1/places/search', async (req, res) => {
   try {
     const { keyword } = req.query;
     if (!keyword) return res.status(400).json({ message: 'Keyword required' });
-
     const regex = new RegExp(keyword, 'i');
     const places = await Place.find({
       $or: [
@@ -197,19 +203,16 @@ app.get('/api/v1/places/search', async (req, res) => {
         { Location: regex },
       ],
     }).lean();
-
     res.json({ status: 'success', results: places.length, data: { places } });
   } catch (err) {
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
 
-// Recommend + Search (Hybrid)
 app.post('/api/v1/recommend-search', async (req, res) => {
   try {
     const { userProfile, keyword } = req.body;
     let query = {};
-
     if (keyword) {
       const regex = new RegExp(keyword, 'i');
       query = {
@@ -220,10 +223,8 @@ app.post('/api/v1/recommend-search', async (req, res) => {
         ],
       };
     }
-
     const places = await Place.find(query).lean();
     const recommendations = recommendPlaces(userProfile, places, 10);
-
     res.json({
       status: 'success',
       results: recommendations.length,
@@ -234,8 +235,8 @@ app.post('/api/v1/recommend-search', async (req, res) => {
   }
 });
 
-// CRUD Routes
-app.route('/api/v1/places').get(getAllPlaces).post(createPlace);
+// ✅ باقي الـ Routes (Get, Update, Delete)
+app.get('/api/v1/places', getAllPlaces);
 app
   .route('/api/v1/places/:_id')
   .get(getPlace)
