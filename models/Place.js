@@ -1,53 +1,91 @@
+/**
+ * Place Model - Represents a historical landmark or tourist attraction.
+ * Features: GeoJSON support for location-based queries and automated rating calculations.
+ */
+
 const mongoose = require('mongoose');
 
 const placeSchema = new mongoose.Schema(
   {
+    // --- Basic Information ---
     ID: Number,
-    'Landmark Name (English)': { type: String, required: true },
-    'Arabic Name': String,
-    Location: String, // اسم المدينة (نص عادي)
-    Coordinates: String, // الإحداثيات القديمة (نص) - سيبناها عشان المرجع
+    'Landmark Name (English)': {
+      type: String,
+      required: [true, 'A landmark must have an English name'],
+      trim: true,
+    },
+    'Arabic Name': {
+      type: String,
+      trim: true,
+    },
+    Location: String, // City/District name as a human-readable string
+    Coordinates: String, // Legacy raw coordinate string for reference
     category: String,
     price: String,
     'Short History Summary': String,
 
-    // ✅ 1. حقل الصور (Cloudinary)
-    // ده اللي هيشيل اللينك اللي راجع من Cloudinary
-    image: { type: String, default: null },
+    // --- Media Assets ---
+    /** @property {string} image - Remote URL of the image hosted on Cloudinary */
+    image: {
+      type: String,
+      default: null,
+    },
 
-    // ✅ 2. حقل الخريطة الجديد (GeoJSON)
-    // ده أهم جزء عشان ميزة "Near Me" تشتغل
+    // --- Geospatial Data (GeoJSON) ---
+    /** * @property {Object} location - GeoJSON object for geospatial indexing
+     * Required for MongoDB $near and $maxDistance queries.
+     */
     location: {
       type: {
         type: String,
-        enum: ['Point'], // لازم تكون 'Point'
+        enum: ['Point'],
         default: 'Point',
       },
+      /** @property {Number[]} coordinates - [Longitude, Latitude] */
       coordinates: {
-        type: [Number], // [Longitude, Latitude] ترتيبهم مهم
+        type: [Number],
         default: [0, 0],
       },
     },
 
-    // ✅ 3. حقول التقييمات (Reviews)
-    // بيتحسبوا أوتوماتيك لما حد يعمل ريفيو
+    // --- Aggregated Social Metrics ---
+    /** @property {number} averageRating - Calculated mean score from user reviews */
     averageRating: {
       type: Number,
       default: 0,
-      set: (val) => Math.round(val * 10) / 10, // بيقرب الرقم لعلامة عشرية واحدة (مثلاً 4.7)
+      min: [0, 'Rating must be above 0'],
+      max: [5, 'Rating must be below 5'],
+      // Rounds to 1 decimal place (e.g., 4.666 -> 4.7)
+      set: (val) => Math.round(val * 10) / 10,
     },
-    ratingsQuantity: { type: Number, default: 0 },
+    /** @property {number} ratingsQuantity - Total number of reviews submitted */
+    ratingsQuantity: {
+      type: Number,
+      default: 0,
+    },
   },
   {
-    strict: false, // بيسمح بحفظ أي حقول زيادة مش مكتوبة هنا
-    timestamps: true, // بيضيف createdAt و updatedAt
+    // Schema Configuration
+    strict: false, // Allows flexibility for legacy data fields not explicitly defined
+    timestamps: true, // Automatically manages createdAt and updatedAt
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
   },
 );
 
-// 🔥 أهم سطر للخرائط:
-// ده الفهرس اللي بيخلي MongoDB يعرف يبحث في الخريطة بسرعة
+/** * GEOSPATIAL INDEX
+ * Critical for performance. Enables 2D sphere calculations for "Nearby" features.
+ */
 placeSchema.index({ location: '2dsphere' });
+
+/**
+ * TEXT INDEX (Optional but recommended)
+ * Enables efficient keyword searching across names and categories.
+ */
+placeSchema.index({
+  'Landmark Name (English)': 'text',
+  'Arabic Name': 'text',
+  category: 'text',
+});
 
 module.exports = mongoose.model('Place', placeSchema);
