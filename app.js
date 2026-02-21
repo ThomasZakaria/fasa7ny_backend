@@ -249,6 +249,41 @@ app.post('/api/v1/user/update-interests', (req, res) => {
   } catch (err) {
     res.status(500).json({ status: 'error', message: err.message });
   }
+}); // --- Toggle Saved Place ---
+app.post('/api/v1/user/toggle-save', (req, res) => {
+  try {
+    const { userId, place } = req.body;
+    const users = loadUsers();
+    const userIndex = users.findIndex((u) => u.id === userId);
+
+    if (userIndex === -1) {
+      return res
+        .status(404)
+        .json({ status: 'fail', message: 'User not found' });
+    }
+
+    // لو مفيش array للمحفوظات، نكريتها
+    if (!users[userIndex].saved_places) {
+      users[userIndex].saved_places = [];
+    }
+
+    const savedList = users[userIndex].saved_places;
+    const existingIndex = savedList.findIndex((p) => p.name === place.name);
+
+    if (existingIndex !== -1) {
+      // لو المكان محفوظ قبل كده -> امسحه
+      savedList.splice(existingIndex, 1);
+    } else {
+      // لو مش محفوظ -> ضيفه
+      savedList.push(place);
+    }
+
+    saveUsers(users);
+
+    res.json({ status: 'success', data: { saved_places: savedList } });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
 });
 // Recommendation Search
 app.post('/api/v1/recommend-search', (req, res) => {
@@ -301,25 +336,54 @@ app.get('/api/v1/categories', (req, res) => {
   }
 });
 
-// Near Me
+// Near Me (Enhanced Algorithm - Always returns closest)
 app.get('/api/v1/places/near-me', (req, res) => {
   try {
-    const { lat, lng, distance = 10 } = req.query;
+    // 1. هنستقبل limit بـ 5 كافتراضي، ولغينا شرط المسافة الصارم
+    const { lat, lng, limit = 5 } = req.query;
     const places = loadPlaces();
 
-    const nearby = places.filter((p) => {
-      if (!p.location) return false;
+    const userLat = parseFloat(lat);
+    const userLng = parseFloat(lng);
 
-      const [plng, plat] = p.location.coordinates;
-      const d = getDistance(parseFloat(lat), parseFloat(lng), plat, plng);
+    if (isNaN(userLat) || isNaN(userLng)) {
+      return res
+        .status(400)
+        .json({ status: 'fail', message: 'Invalid coordinates provided.' });
+    }
 
-      return d <= distance;
-    });
+    const placesWithDistance = places
+      .map((p) => {
+        let pLat, pLng;
+
+        if (p['Coordinates']) {
+          const coords = p['Coordinates'].split(',');
+          pLat = parseFloat(coords[0].trim());
+          pLng = parseFloat(coords[1].trim());
+        } else if (p.location && p.location.coordinates) {
+          pLng = parseFloat(p.location.coordinates[0]);
+          pLat = parseFloat(p.location.coordinates[1]);
+        } else {
+          return null;
+        }
+
+        if (isNaN(pLat) || isNaN(pLng)) return null;
+
+        const distanceAway = getDistance(userLat, userLng, pLat, pLng);
+        return { ...p, distanceAway };
+      })
+      .filter((p) => p !== null);
+
+    // 2. الترتيب من الأقرب للأبعد دايماً
+    placesWithDistance.sort((a, b) => a.distanceAway - b.distanceAway);
+
+    // 3. ناخد أقرب أماكن بناءً على العدد المطلوب فقط
+    const finalResults = placesWithDistance.slice(0, parseInt(limit));
 
     res.json({
       status: 'success',
-      results: nearby.length,
-      data: { places: nearby },
+      results: finalResults.length,
+      data: { places: finalResults },
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

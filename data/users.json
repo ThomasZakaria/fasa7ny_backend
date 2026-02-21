@@ -9,6 +9,33 @@
         "place_name": "Babylon Fortress",
         "confidence": "96.36%",
         "scannedAt": "2026-02-21T21:36:41.069Z"
+      },
+      {
+        "place_name": "Hatshepsut Temple",
+        "confidence": "82.74%",
+        "scannedAt": "2026-02-21T22:12:22.559Z"
+      },
+      {
+        "place_name": "Nefertiti Bust",
+        "confidence": "5.85%",
+        "scannedAt": "2026-02-21T23:12:01.353Z"
+      },
+      {
+        "place_name": "Babylon Fortress",
+        "confidence": "96.36%",
+        "scannedAt": "2026-02-21T23:24:01.101Z"
+      }
+    ],
+    "saved_places": [
+      {
+        "name": "Hatshepsut Temple",
+        "location": "Luxor",
+        "img": "[URL]"
+      },
+      {
+        "name": "Fatima Khatun Mosque",
+        "location": "Cairo",
+        "img": "[URL]"
       }
     ]
   }
