@@ -32,7 +32,23 @@ function loadReviews() {
 function saveReviews(data) {
   fs.writeFileSync(reviewsPath, JSON.stringify(data, null, 2));
 }
+const usersPath = path.join(__dirname, 'data', 'users.json');
 
+function loadUsers() {
+  try {
+    // لو الملف مش موجود، هيكريته تلقائياً
+    if (!fs.existsSync(usersPath)) {
+      fs.writeFileSync(usersPath, JSON.stringify([]));
+    }
+    return JSON.parse(fs.readFileSync(usersPath, 'utf-8'));
+  } catch (err) {
+    return [];
+  }
+}
+
+function saveUsers(data) {
+  fs.writeFileSync(usersPath, JSON.stringify(data, null, 2));
+}
 // ==========================================
 // 2. CLOUDINARY CONFIG
 // ==========================================
@@ -145,38 +161,95 @@ function getDistance(lat1, lon1, lat2, lon2) {
 // ==========================================
 
 // AI Detect
+// AI Detect & Save History
 app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
   try {
     const imageUrl = req.file.path;
+    const userId = req.body.userId; // هنستقبل الـ ID من الفرونت إند
 
+    // 1. الاتصال بـ Python API
     const pythonResponse = await axios.post('http://127.0.0.1:5000/predict', {
       url: imageUrl,
     });
 
     const landmarkName = pythonResponse.data.class;
+    const confidence = pythonResponse.data.confidence;
 
+    // 2. جلب تفاصيل المكان من places.json
     const places = loadPlaces();
-
     const placeDetails = places.find((p) =>
       p['Landmark Name (English)']
         .toLowerCase()
         .includes(landmarkName.toLowerCase()),
     );
 
+    let updatedHistory = null;
+
+    // 3. حفظ العملية في الـ History الخاص بالمستخدم (لو كان مسجل دخول)
+    if (userId) {
+      const users = loadUsers(); // دالة loadUsers اللي ضفناها المرة اللي فاتت
+      const userIndex = users.findIndex((u) => u.id === userId);
+
+      if (userIndex !== -1) {
+        // إنشاء كائن الـ history الجديد
+        const newScan = {
+          place_name: placeDetails
+            ? placeDetails['Landmark Name (English)']
+            : landmarkName,
+          confidence: confidence,
+          scannedAt: new Date().toISOString(),
+        };
+
+        // التأكد إن مصفوفة الـ scan_history موجودة وإضافة المسح الجديد
+        if (!users[userIndex].scan_history) {
+          users[userIndex].scan_history = [];
+        }
+        users[userIndex].scan_history.push(newScan);
+
+        saveUsers(users); // حفظ في users.json
+        updatedHistory = users[userIndex].scan_history;
+      }
+    }
+
     res.json({
       status: 'success',
       data: {
         prediction: landmarkName,
-        confidence: pythonResponse.data.confidence,
+        confidence: confidence,
         details: placeDetails || null,
         imageUrl,
+        updatedHistory, // بنرجع الـ History الجديد عشان الفرونت إند يتحدث
       },
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+// --- Update User Interests ---
+app.post('/api/v1/user/update-interests', (req, res) => {
+  try {
+    const { userId, interests } = req.body;
+    const users = loadUsers();
+    const userIndex = users.findIndex((u) => u.id === userId);
 
+    if (userIndex === -1) {
+      return res
+        .status(404)
+        .json({ status: 'fail', message: 'User not found' });
+    }
+
+    // تحديث الاهتمامات
+    users[userIndex].interests = interests;
+    saveUsers(users);
+
+    res.json({
+      status: 'success',
+      data: { interests: users[userIndex].interests },
+    });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
 // Recommendation Search
 app.post('/api/v1/recommend-search', (req, res) => {
   try {
@@ -199,6 +272,29 @@ app.post('/api/v1/recommend-search', (req, res) => {
     res.json({
       status: 'success',
       data: { recommendations },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get All Places Grouped By Category
+app.get('/api/v1/categories', (req, res) => {
+  try {
+    const places = loadPlaces();
+    const groupedCategories = {};
+
+    places.forEach((place) => {
+      const category = place.category || 'Other Places';
+      if (!groupedCategories[category]) {
+        groupedCategories[category] = [];
+      }
+      groupedCategories[category].push(place);
+    });
+
+    res.json({
+      status: 'success',
+      data: groupedCategories,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -255,7 +351,82 @@ app.post('/api/v1/places/:placeId/reviews', (req, res) => {
     res.status(400).json({ error: err.message });
   }
 });
+// --- Auth: Sign Up ---
+app.post('/api/v1/auth/signup', (req, res) => {
+  try {
+    const { name, email, password } = req.body;
 
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Please provide name, email, and password.',
+      });
+    }
+
+    const users = loadUsers();
+
+    // التأكد إن الإيميل مش متسجل قبل كده
+    if (users.find((u) => u.email === email)) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Email already exists! Please login.',
+      });
+    }
+
+    // إنشاء مستخدم جديد
+    const newUser = {
+      id: Date.now().toString(),
+      name,
+      email,
+      password, // في المشاريع الحقيقية بيتم تشفير الباسورد، لكن ده كافي للمشروع الحالي
+      scan_history: [],
+    };
+
+    users.push(newUser);
+    saveUsers(users);
+
+    res.status(201).json({
+      status: 'success',
+      data: {
+        user: { id: newUser.id, name: newUser.name, email: newUser.email },
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+// --- Auth: Login ---
+app.post('/api/v1/auth/login', (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Please provide email and password.',
+      });
+    }
+
+    const users = loadUsers();
+    const user = users.find(
+      (u) => u.email === email && u.password === password,
+    );
+
+    if (!user) {
+      return res
+        .status(401)
+        .json({ status: 'fail', message: 'Invalid email or password.' });
+    }
+
+    res.status(200).json({
+      status: 'success',
+      data: { user: { id: user.id, name: user.name, email: user.email } },
+    });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
 // ==========================================
 // 6. SERVER START
 // ==========================================
