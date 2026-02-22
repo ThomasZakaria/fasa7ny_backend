@@ -15,7 +15,12 @@ const { CloudinaryStorage } = require('multer-storage-cloudinary');
 require('dotenv').config();
 
 const app = express();
-
+const cors = require('cors');
+app.use(
+  cors({
+    origin: 'https://fasa7ny-frontend.vercel.app', // Change this to your actual frontend link
+  }),
+);
 // ==========================================
 // 1. FILE DATABASE (JSON)
 // ==========================================

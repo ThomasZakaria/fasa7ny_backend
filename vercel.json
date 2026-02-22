@@ -5,7 +5,7 @@
     { "src": "ai_service/app.py", "use": "@vercel/python" }
   ],
   "routes": [
-    { "source": "/api/ai/(.*)", "destination": "ai_service/app.py" },
-    { "source": "/(.*)", "destination": "app.js" }
+    { "src": "/api/ai/(.*)", "dest": "ai_service/app.py" },
+    { "src": "/(.*)", "dest": "app.js" }
   ]
 }
