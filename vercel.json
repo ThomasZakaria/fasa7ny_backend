@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "app.js", "use": "@vercel/node" },
+    { "src": "ai_service/app.py", "use": "@vercel/python" }
+  ],
+  "routes": [
+    { "source": "/api/ai/(.*)", "destination": "ai_service/app.py" },
+    { "source": "/(.*)", "destination": "app.js" }
+  ]
+}

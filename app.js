@@ -532,8 +532,9 @@ app.post('/api/v1/places/:placeId/reviews', (req, res) => {
 // 9. SERVER START
 // ==========================================
 
-const PORT = process.env.PORT || 3000;
+// const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-  console.log(`🚀 Fasa7ny AI Server is running on port ${PORT}`);
-});
+// app.listen(PORT, () => {
+//   console.log(`🚀 Fasa7ny AI Server is running on port ${PORT}`);
+// });
+module.exports = app;
