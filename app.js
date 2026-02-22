@@ -242,5 +242,24 @@ app.get('/api/v1/categories', async (req, res) => {
   }
 });
 
+// 10. NEARBY PLACES ROUTE
+app.get('/api/v1/places/near-me', async (req, res) => {
+  try {
+    const { lat, lng, limit } = req.query;
+
+    // Fetch some places from MongoDB
+    const rawPlaces = await Place.find().limit(Number(limit) || 5);
+
+    // Format them so the frontend can read the custom labels
+    const places = rawPlaces.map(formatPlace);
+
+    res
+      .status(200)
+      .json({ status: 'success', results: places.length, data: { places } });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 // VERCEL EXPORT
 module.exports = app;
