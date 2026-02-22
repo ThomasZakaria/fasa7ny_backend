@@ -1,5 +1,6 @@
 /**
  * Egypt Tour Guide API - JSON Database Version
+ * Integrated with Smart Search (Fuse.js), Recommendations, and AI.
  */
 
 const express = require('express');
@@ -8,6 +9,7 @@ const multer = require('multer');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const Fuse = require('fuse.js'); // Smart Search Library
 const { v2: cloudinary } = require('cloudinary');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 require('dotenv').config();
@@ -20,23 +22,24 @@ const app = express();
 
 const placesPath = path.join(__dirname, 'data', 'places.json');
 const reviewsPath = path.join(__dirname, 'data', 'reviews.json');
+const usersPath = path.join(__dirname, 'data', 'users.json');
 
 function loadPlaces() {
   return JSON.parse(fs.readFileSync(placesPath, 'utf-8'));
 }
 
 function loadReviews() {
+  if (!fs.existsSync(reviewsPath))
+    fs.writeFileSync(reviewsPath, JSON.stringify([]));
   return JSON.parse(fs.readFileSync(reviewsPath, 'utf-8'));
 }
 
 function saveReviews(data) {
   fs.writeFileSync(reviewsPath, JSON.stringify(data, null, 2));
 }
-const usersPath = path.join(__dirname, 'data', 'users.json');
 
 function loadUsers() {
   try {
-    // لو الملف مش موجود، هيكريته تلقائياً
     if (!fs.existsSync(usersPath)) {
       fs.writeFileSync(usersPath, JSON.stringify([]));
     }
@@ -49,8 +52,9 @@ function loadUsers() {
 function saveUsers(data) {
   fs.writeFileSync(usersPath, JSON.stringify(data, null, 2));
 }
+
 // ==========================================
-// 2. CLOUDINARY CONFIG
+// 2. CLOUDINARY CONFIG (Image Uploads)
 // ==========================================
 
 cloudinary.config({
@@ -77,7 +81,7 @@ app.use(cors());
 app.use(express.json());
 
 // ==========================================
-// 4. HELPERS
+// 4. HELPERS (Algorithms & Logic)
 // ==========================================
 
 function detectPriceLevel(price) {
@@ -129,21 +133,18 @@ function recommendPlaces(user, places, limit = 10) {
 
     if (safeInterests.some((i) => placeCat.includes(i))) score += 3;
     if (safeCity && placeLoc.includes(safeCity)) score += 2;
-    if (history.includes(placeName)) score -= 5;
+    if (history.includes(placeName)) score -= 5; // Demote visited places
     if (place.averageRating >= 4.5) score += 2;
 
-    results.push({
-      ...place,
-      score,
-    });
+    results.push({ ...place, score });
   }
 
   return results.sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
-// distance calculation (Haversine)
+// Distance calculation (Haversine Formula)
 function getDistance(lat1, lon1, lat2, lon2) {
-  const R = 6371;
+  const R = 6371; // Earth radius in km
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
 
@@ -157,88 +158,90 @@ function getDistance(lat1, lon1, lat2, lon2) {
 }
 
 // ==========================================
-// 5. ROUTES
+// 5. AUTHENTICATION ROUTES
 // ==========================================
 
-// AI Detect
-// AI Detect & Save History
-app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
+// Sign Up
+app.post('/api/v1/auth/signup', (req, res) => {
   try {
-    const imageUrl = req.file.path;
-    const userId = req.body.userId; // هنستقبل الـ ID من الفرونت إند
-
-    // 1. الاتصال بـ Python API
-    const pythonResponse = await axios.post('http://127.0.0.1:5000/predict', {
-      url: imageUrl,
-    });
-
-    const landmarkName = pythonResponse.data.class;
-    const confidence = pythonResponse.data.confidence;
-
-    // 2. جلب تفاصيل المكان من places.json
-    const places = loadPlaces();
-    const placeDetails = places.find((p) =>
-      p['Landmark Name (English)']
-        .toLowerCase()
-        .includes(landmarkName.toLowerCase()),
-    );
-
-    let updatedHistory = null;
-
-    // 3. حفظ العملية في الـ History الخاص بالمستخدم (لو كان مسجل دخول)
-    if (userId) {
-      const users = loadUsers(); // دالة loadUsers اللي ضفناها المرة اللي فاتت
-      const userIndex = users.findIndex((u) => u.id === userId);
-
-      if (userIndex !== -1) {
-        // إنشاء كائن الـ history الجديد
-        const newScan = {
-          place_name: placeDetails
-            ? placeDetails['Landmark Name (English)']
-            : landmarkName,
-          confidence: confidence,
-          scannedAt: new Date().toISOString(),
-        };
-
-        // التأكد إن مصفوفة الـ scan_history موجودة وإضافة المسح الجديد
-        if (!users[userIndex].scan_history) {
-          users[userIndex].scan_history = [];
-        }
-        users[userIndex].scan_history.push(newScan);
-
-        saveUsers(users); // حفظ في users.json
-        updatedHistory = users[userIndex].scan_history;
-      }
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) {
+      return res
+        .status(400)
+        .json({ status: 'fail', message: 'Missing fields.' });
     }
 
-    res.json({
+    const users = loadUsers();
+    if (users.find((u) => u.email === email)) {
+      return res
+        .status(400)
+        .json({ status: 'fail', message: 'Email already exists.' });
+    }
+
+    const newUser = {
+      id: Date.now().toString(),
+      name,
+      email,
+      password,
+      scan_history: [],
+      saved_places: [],
+      interests: [],
+    };
+
+    users.push(newUser);
+    saveUsers(users);
+
+    res.status(201).json({
       status: 'success',
       data: {
-        prediction: landmarkName,
-        confidence: confidence,
-        details: placeDetails || null,
-        imageUrl,
-        updatedHistory, // بنرجع الـ History الجديد عشان الفرونت إند يتحدث
+        user: { id: newUser.id, name: newUser.name, email: newUser.email },
       },
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ status: 'error', message: err.message });
   }
 });
-// --- Update User Interests ---
+
+// Login
+app.post('/api/v1/auth/login', (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const users = loadUsers();
+    const user = users.find(
+      (u) => u.email === email && u.password === password,
+    );
+
+    if (!user) {
+      return res
+        .status(401)
+        .json({ status: 'fail', message: 'Invalid credentials.' });
+    }
+
+    res.status(200).json({
+      status: 'success',
+      data: { user: { id: user.id, name: user.name, email: user.email } },
+    });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+// ==========================================
+// 6. USER PROFILE ROUTES
+// ==========================================
+
+// Update Interests
 app.post('/api/v1/user/update-interests', (req, res) => {
   try {
     const { userId, interests } = req.body;
     const users = loadUsers();
     const userIndex = users.findIndex((u) => u.id === userId);
 
-    if (userIndex === -1) {
+    if (userIndex === -1)
       return res
         .status(404)
         .json({ status: 'fail', message: 'User not found' });
-    }
 
-    // تحديث الاهتمامات
     users[userIndex].interests = interests;
     saveUsers(users);
 
@@ -249,100 +252,125 @@ app.post('/api/v1/user/update-interests', (req, res) => {
   } catch (err) {
     res.status(500).json({ status: 'error', message: err.message });
   }
-}); // --- Toggle Saved Place ---
+});
+
+// Toggle Save Place
 app.post('/api/v1/user/toggle-save', (req, res) => {
   try {
     const { userId, place } = req.body;
     const users = loadUsers();
     const userIndex = users.findIndex((u) => u.id === userId);
 
-    if (userIndex === -1) {
+    if (userIndex === -1)
       return res
         .status(404)
         .json({ status: 'fail', message: 'User not found' });
-    }
 
-    // لو مفيش array للمحفوظات، نكريتها
-    if (!users[userIndex].saved_places) {
-      users[userIndex].saved_places = [];
-    }
-
+    if (!users[userIndex].saved_places) users[userIndex].saved_places = [];
     const savedList = users[userIndex].saved_places;
     const existingIndex = savedList.findIndex((p) => p.name === place.name);
 
     if (existingIndex !== -1) {
-      // لو المكان محفوظ قبل كده -> امسحه
-      savedList.splice(existingIndex, 1);
+      savedList.splice(existingIndex, 1); // Remove if exists
     } else {
-      // لو مش محفوظ -> ضيفه
-      savedList.push(place);
+      savedList.push(place); // Add if not exists
     }
 
     saveUsers(users);
-
     res.json({ status: 'success', data: { saved_places: savedList } });
   } catch (err) {
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
-// Recommendation Search
-app.post('/api/v1/recommend-search', (req, res) => {
+
+// ==========================================
+// 7. PLACES & SMART SEARCH ROUTES
+// ==========================================
+
+// AI Detect Image
+app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
   try {
-    const { userProfile, keyword } = req.body;
-    let places = loadPlaces();
+    const imageUrl = req.file.path;
+    const userId = req.body.userId;
 
-    if (keyword) {
-      const k = keyword.toLowerCase();
-      places = places.filter(
-        (p) =>
-          p['Landmark Name (English)']?.toLowerCase().includes(k) ||
-          p['Arabic Name']?.toLowerCase().includes(k) ||
-          p.category?.toLowerCase().includes(k) ||
-          p.Location?.toLowerCase().includes(k),
-      );
+    const pythonResponse = await axios.post('http://127.0.0.1:5000/predict', {
+      url: imageUrl,
+    });
+    const landmarkName = pythonResponse.data.class;
+    const confidence = pythonResponse.data.confidence;
+
+    const places = loadPlaces();
+    const placeDetails = places.find((p) =>
+      p['Landmark Name (English)']
+        .toLowerCase()
+        .includes(landmarkName.toLowerCase()),
+    );
+
+    let updatedHistory = null;
+    if (userId) {
+      const users = loadUsers();
+      const userIndex = users.findIndex((u) => u.id === userId);
+
+      if (userIndex !== -1) {
+        if (!users[userIndex].scan_history) users[userIndex].scan_history = [];
+        users[userIndex].scan_history.push({
+          place_name: placeDetails
+            ? placeDetails['Landmark Name (English)']
+            : landmarkName,
+          confidence,
+          scannedAt: new Date().toISOString(),
+        });
+        saveUsers(users);
+        updatedHistory = users[userIndex].scan_history;
+      }
     }
-
-    const recommendations = recommendPlaces(userProfile, places);
 
     res.json({
       status: 'success',
-      data: { recommendations },
+      data: {
+        prediction: landmarkName,
+        confidence,
+        details: placeDetails || null,
+        imageUrl,
+        updatedHistory,
+      },
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Get All Places Grouped By Category
+// Get Categories (With Safe City Filter)
 app.get('/api/v1/categories', (req, res) => {
   try {
-    const places = loadPlaces();
-    const groupedCategories = {};
+    const { city } = req.query;
+    let places = loadPlaces();
 
+    if (city && city.toLowerCase() !== 'all') {
+      places = places.filter((place) => {
+        if (!place.Location) return false;
+        return place.Location.toLowerCase().includes(city.toLowerCase());
+      });
+    }
+
+    const groupedCategories = {};
     places.forEach((place) => {
       const category = place.category || 'Other Places';
-      if (!groupedCategories[category]) {
-        groupedCategories[category] = [];
-      }
+      if (!groupedCategories[category]) groupedCategories[category] = [];
       groupedCategories[category].push(place);
     });
 
-    res.json({
-      status: 'success',
-      data: groupedCategories,
-    });
+    res.json({ status: 'success', data: groupedCategories });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Near Me (Enhanced Algorithm - Always returns closest)
+// Near Me Algorithm
 app.get('/api/v1/places/near-me', (req, res) => {
   try {
-    // 1. هنستقبل limit بـ 5 كافتراضي، ولغينا شرط المسافة الصارم
     const { lat, lng, limit = 5 } = req.query;
     const places = loadPlaces();
-
     const userLat = parseFloat(lat);
     const userLng = parseFloat(lng);
 
@@ -355,7 +383,6 @@ app.get('/api/v1/places/near-me', (req, res) => {
     const placesWithDistance = places
       .map((p) => {
         let pLat, pLng;
-
         if (p['Coordinates']) {
           const coords = p['Coordinates'].split(',');
           pLat = parseFloat(coords[0].trim());
@@ -374,10 +401,7 @@ app.get('/api/v1/places/near-me', (req, res) => {
       })
       .filter((p) => p !== null);
 
-    // 2. الترتيب من الأقرب للأبعد دايماً
     placesWithDistance.sort((a, b) => a.distanceAway - b.distanceAway);
-
-    // 3. ناخد أقرب أماكن بناءً على العدد المطلوب فقط
     const finalResults = placesWithDistance.slice(0, parseInt(limit));
 
     res.json({
@@ -390,113 +414,126 @@ app.get('/api/v1/places/near-me', (req, res) => {
   }
 });
 
-// Reviews
+// Smart Search (Fuzzy Matching + Filters + Interests Scoring)
+// ==========================================
+// Smart Search (Fuzzy Matching + Filters + Interests Scoring)
+// ==========================================
+app.post('/api/v1/recommend-search', (req, res) => {
+  try {
+    const { userProfile, keyword, filters } = req.body;
+    let places = loadPlaces();
+
+    // 1. Fuzzy Search with Fuse.js (With Smart Weights)
+    if (keyword && keyword.trim() !== '') {
+      const fuseOptions = {
+        // إعطاء أهمية (وزن) أكبر لاسم المكان عن باقي البيانات
+        keys: [
+          { name: 'Landmark Name (English)', weight: 0.6 },
+          { name: 'Arabic Name', weight: 0.2 },
+          { name: 'category', weight: 0.1 },
+          { name: 'Location', weight: 0.1 },
+        ],
+        threshold: 0.4, // رفع النسبة لـ 0.4 عشان يتسامح مع الأخطاء الإملائية الأكبر
+        distance: 100,
+        ignoreLocation: true,
+      };
+      const fuse = new Fuse(places, fuseOptions);
+      const result = fuse.search(keyword);
+      places = result.map((res) => res.item);
+    }
+
+    // 2. Apply UI Filters (Smart Category Matching)
+    if (filters) {
+      if (filters.city && filters.city !== 'all') {
+        places = places.filter(
+          (p) =>
+            p.Location &&
+            p.Location.toLowerCase().includes(filters.city.toLowerCase()),
+        );
+      }
+
+      if (filters.category && filters.category !== 'all') {
+        const filterCat = filters.category.toLowerCase();
+        places = places.filter((p) => {
+          if (!p.category) return false;
+          const dbCat = p.category.toLowerCase();
+
+          // حل مشكلة عدم التطابق بين الواجهة والداتا بيز
+          return (
+            dbCat.includes(filterCat) ||
+            filterCat.includes(dbCat) ||
+            (filterCat.includes('temple') && dbCat.includes('temple')) ||
+            (filterCat.includes('mosque') && dbCat.includes('islamic')) ||
+            (filterCat.includes('church') && dbCat.includes('coptic'))
+          );
+        });
+      }
+
+      if (filters.budget && filters.budget !== 'any') {
+        places = places.filter((p) => priceAllowed(filters.budget, p.price));
+      }
+    }
+
+    // 3. Score & Recommend (Limit increased to 50 so no valid search results are hidden)
+    const recommendations = recommendPlaces(userProfile || {}, places, 50);
+
+    res.json({
+      status: 'success',
+      results: recommendations.length,
+      data: { recommendations },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+// ==========================================
+// 8. REVIEWS ROUTES
+// ==========================================
+
+app.get('/api/v1/places/:placeId/reviews', (req, res) => {
+  try {
+    const reviews = loadReviews();
+    const placeReviews = reviews.filter((r) => r.place === req.params.placeId);
+    res.status(200).json({
+      status: 'success',
+      results: placeReviews.length,
+      data: { reviews: placeReviews },
+    });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 app.post('/api/v1/places/:placeId/reviews', (req, res) => {
   try {
-    const { rating, comment, userId } = req.body;
+    const { rating, comment, userId, username } = req.body;
     const reviews = loadReviews();
 
     const newReview = {
       id: Date.now().toString(),
       place: req.params.placeId,
       user: userId,
-      rating,
+      username: username || 'Anonymous',
+      rating: Number(rating),
       comment,
+      createdAt: new Date().toISOString(),
     };
 
     reviews.push(newReview);
     saveReviews(reviews);
 
-    res.status(201).json({
-      status: 'success',
-      data: { review: newReview },
-    });
+    res.status(201).json({ status: 'success', data: { review: newReview } });
   } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-// --- Auth: Sign Up ---
-app.post('/api/v1/auth/signup', (req, res) => {
-  try {
-    const { name, email, password } = req.body;
-
-    if (!name || !email || !password) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Please provide name, email, and password.',
-      });
-    }
-
-    const users = loadUsers();
-
-    // التأكد إن الإيميل مش متسجل قبل كده
-    if (users.find((u) => u.email === email)) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Email already exists! Please login.',
-      });
-    }
-
-    // إنشاء مستخدم جديد
-    const newUser = {
-      id: Date.now().toString(),
-      name,
-      email,
-      password, // في المشاريع الحقيقية بيتم تشفير الباسورد، لكن ده كافي للمشروع الحالي
-      scan_history: [],
-    };
-
-    users.push(newUser);
-    saveUsers(users);
-
-    res.status(201).json({
-      status: 'success',
-      data: {
-        user: { id: newUser.id, name: newUser.name, email: newUser.email },
-      },
-    });
-  } catch (err) {
-    res.status(500).json({ status: 'error', message: err.message });
+    res.status(400).json({ status: 'error', message: err.message });
   }
 });
 
-// --- Auth: Login ---
-app.post('/api/v1/auth/login', (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Please provide email and password.',
-      });
-    }
-
-    const users = loadUsers();
-    const user = users.find(
-      (u) => u.email === email && u.password === password,
-    );
-
-    if (!user) {
-      return res
-        .status(401)
-        .json({ status: 'fail', message: 'Invalid email or password.' });
-    }
-
-    res.status(200).json({
-      status: 'success',
-      data: { user: { id: user.id, name: user.name, email: user.email } },
-    });
-  } catch (err) {
-    res.status(500).json({ status: 'error', message: err.message });
-  }
-});
 // ==========================================
-// 6. SERVER START
+// 9. SERVER START
 // ==========================================
 
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚀 Fasa7ny AI Server is running on port ${PORT}`);
 });
