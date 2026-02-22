@@ -31,7 +31,7 @@ mongoose
   .then(() => console.log('✅ Connected to MongoDB Atlas'))
   .catch((err) => console.error('❌ MongoDB Connection Error:', err));
 
-// 3. DATABASE SCHEMAS (Replacing JSON files)
+// 3. DATABASE SCHEMAS & TRANSLATOR
 const UserSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
@@ -49,17 +49,21 @@ const ReviewSchema = new mongoose.Schema({
 });
 const Review = mongoose.model('Review', ReviewSchema);
 
-const PlaceSchema = new mongoose.Schema({
-  id: String,
-  name: String,
-  category: String,
-  governorate: String,
-  description: String,
-  rating: Number,
-  price: String,
-  image: String,
-});
+// CHANGED: strict: false allows Mongoose to read custom database fields like "Location"
+const PlaceSchema = new mongoose.Schema({}, { strict: false });
 const Place = mongoose.model('Place', PlaceSchema);
+
+// NEW: A translator function to convert database labels into frontend labels
+const formatPlace = (p) => ({
+  id: p._id,
+  name: p['Landmark Name (English)'] || p.name,
+  category: p.category,
+  governorate: p.Location || p.governorate,
+  description: p['Short History Summary'] || p.description,
+  rating: p.averageRating || p.rating,
+  price: p.price,
+  image: p['Main Image URL'] || p.image,
+});
 
 // 4. CLOUDINARY CONFIG (For AI Landmark Images)
 cloudinary.config({
@@ -115,7 +119,8 @@ app.post('/api/v1/auth/login', async (req, res) => {
 // 6. SMART SEARCH & PLACES
 app.get('/api/v1/places/search', async (req, res) => {
   try {
-    const allPlaces = await Place.find();
+    const rawPlaces = await Place.find();
+    const allPlaces = rawPlaces.map(formatPlace); // Format for frontend
     const { q } = req.query;
 
     if (!q)
@@ -148,21 +153,21 @@ app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
     const imageUrl = req.file.path;
 
     // AUTOMATIC URL SWAPPING
-    // Check if we are running locally or on Vercel
     const isLocal =
       req.headers.host.includes('localhost') ||
       req.headers.host.includes('127.0.0.1');
 
     const aiUrl = isLocal
-      ? 'http://127.0.0.1:5000/predict' // Your local Python Flask port
-      : `${process.env.AI_SERVICE_URL}/predict`; // Your Vercel AI path
+      ? 'http://127.0.0.1:5000/predict'
+      : `${process.env.AI_SERVICE_URL}/predict`;
 
     console.log(`📡 Sending image to AI at: ${aiUrl}`);
 
     const pythonResponse = await axios.post(aiUrl, { url: imageUrl });
 
     const landmarkName = pythonResponse.data.landmark;
-    const allPlaces = await Place.find();
+    const rawPlaces = await Place.find();
+    const allPlaces = rawPlaces.map(formatPlace); // Format so Fuse can read "name"
     const fuse = new Fuse(allPlaces, { keys: ['name'], threshold: 0.4 });
     const matchedPlace = fuse.search(landmarkName)[0]?.item;
 
@@ -209,15 +214,19 @@ app.post('/api/v1/places/:placeId/reviews', async (req, res) => {
     res.status(400).json({ status: 'fail', message: err.message });
   }
 });
+
 // 9. CATEGORIES ROUTE
 app.get('/api/v1/categories', async (req, res) => {
   try {
     const { city } = req.query;
     let filter = {};
 
-    // If the frontend asks for a specific city, filter the database
     if (city) {
-      filter.governorate = new RegExp(city, 'i'); // Case-insensitive match
+      // Look in BOTH possible fields to catch the data
+      filter.$or = [
+        { Location: new RegExp(city, 'i') },
+        { governorate: new RegExp(city, 'i') },
+      ];
     }
 
     const places = await Place.find(filter);
@@ -232,5 +241,6 @@ app.get('/api/v1/categories', async (req, res) => {
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
+
 // VERCEL EXPORT
 module.exports = app;
