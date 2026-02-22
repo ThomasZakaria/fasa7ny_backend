@@ -215,30 +215,47 @@ app.post('/api/v1/places/:placeId/reviews', async (req, res) => {
   }
 });
 
-// 9. CATEGORIES ROUTE
+// 9. CATEGORIES ROUTE (Bulletproof Version)
 app.get('/api/v1/categories', async (req, res) => {
   try {
     const { city } = req.query;
     let filter = {};
 
-    if (city) {
-      // Look in BOTH possible fields to catch the data
+    // Only apply filter if city has a value and isn't "all" or "undefined"
+    if (city && city !== 'all' && city !== 'undefined' && city.trim() !== '') {
       filter.$or = [
         { Location: new RegExp(city, 'i') },
         { governorate: new RegExp(city, 'i') },
       ];
     }
 
-    const places = await Place.find(filter);
+    console.log('🔍 Fetching categories with filter:', JSON.stringify(filter));
 
-    // Extract a list of unique categories from those places
+    const places = await Place.find(filter).lean(); // .lean() makes it faster and easier to read
+
+    if (!places || !Array.isArray(places)) {
+      return res
+        .status(200)
+        .json({ status: 'success', data: { categories: [] } });
+    }
+
+    // Safely extract categories
     const categories = [
-      ...new Set(places.map((place) => place.category).filter(Boolean)),
+      ...new Set(
+        places
+          .map((place) => place.category || place.Category) // Check both cases
+          .filter(Boolean),
+      ),
     ];
 
+    console.log(`✅ Found ${categories.length} categories`);
     res.status(200).json({ status: 'success', data: { categories } });
   } catch (err) {
-    res.status(500).json({ status: 'error', message: err.message });
+    console.error('❌ CATEGORIES ROUTE CRASHED:', err.message);
+    res.status(500).json({
+      status: 'error',
+      message: 'Backend crash: ' + err.message,
+    });
   }
 });
 
