@@ -209,6 +209,28 @@ app.post('/api/v1/places/:placeId/reviews', async (req, res) => {
     res.status(400).json({ status: 'fail', message: err.message });
   }
 });
+// 9. CATEGORIES ROUTE
+app.get('/api/v1/categories', async (req, res) => {
+  try {
+    const { city } = req.query;
+    let filter = {};
 
+    // If the frontend asks for a specific city, filter the database
+    if (city) {
+      filter.governorate = new RegExp(city, 'i'); // Case-insensitive match
+    }
+
+    const places = await Place.find(filter);
+
+    // Extract a list of unique categories from those places
+    const categories = [
+      ...new Set(places.map((place) => place.category).filter(Boolean)),
+    ];
+
+    res.status(200).json({ status: 'success', data: { categories } });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
 // VERCEL EXPORT
 module.exports = app;
