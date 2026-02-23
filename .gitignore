@@ -1,0 +1,7 @@
+node_modules/
+.env
+dev-data/
+uploads/
+*.log
+tools
+ai_service/venv/
