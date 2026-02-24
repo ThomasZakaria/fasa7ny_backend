@@ -81,6 +81,36 @@
         "name": "Akhenaten",
         "location": "Amarna - Minya",
         "img": "[URL]"
+      },
+      {
+        "id": 96,
+        "name": "El Ma'eini mosque, Dumyat",
+        "location": "Damietta",
+        "img": "https://s7g10.scene7.com/is/image/barcelo/pyramids-of-giza-facts_ancient-pyramids-of-giza?&&fmt=webp-alpha&qlt=75&wid=1300&fit=crop,1"
+      },
+      {
+        "id": 21,
+        "name": "Al Rifa'i Mosque",
+        "location": "Cairo",
+        "img": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c4/%D9%85%D8%B3%D8%AC%D8%AF_%D8%A7%D9%84%D8%B1%D9%81%D8%A7%D8%B9%D9%8A.jpg/1920px-%D9%85%D8%B3%D8%AC%D8%AF_%D8%A7%D9%84%D8%B1%D9%81%D8%A7%D8%B9%D9%8A.jpg"
+      },
+      {
+        "id": 6,
+        "name": "Abu el Abbas el Mursi Mosque",
+        "location": "Alexandria",
+        "img": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fa/2007-05-043.jpg/1920px-2007-05-043.jpg"
+      },
+      {
+        "id": 103,
+        "name": "Fatima Khatun Mosque",
+        "location": "Cairo",
+        "img": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4c/Great_Mosque_of_Jenin6.jpg/1920px-Great_Mosque_of_Jenin6.jpg"
+      },
+      {
+        "id": 134,
+        "name": "KV17",
+        "location": "Luxor (Valley of the Kings)",
+        "img": "https://upload.wikimedia.org/wikipedia/commons/0/0c/Luxor%2C_Tal_der_K%C3%B6nige_%281995%2C_860x605%29.jpg"
       }
     ]
   }
