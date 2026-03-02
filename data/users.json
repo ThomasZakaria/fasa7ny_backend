@@ -111,7 +111,28 @@
         "name": "KV17",
         "location": "Luxor (Valley of the Kings)",
         "img": "https://upload.wikimedia.org/wikipedia/commons/0/0c/Luxor%2C_Tal_der_K%C3%B6nige_%281995%2C_860x605%29.jpg"
+      },
+      {
+        "id": 126,
+        "name": "Hatshepsut Temple",
+        "location": "Luxor",
+        "img": "https://upload.wikimedia.org/wikipedia/commons/3/35/LuxorHotelsIbnWalidSt.jpg"
+      },
+      {
+        "id": 66,
+        "name": "Cairo Tower",
+        "location": "Cairo",
+        "img": "https://upload.wikimedia.org/wikipedia/commons/c/ca/Cairo_Skyline_%282020%29.jpg"
       }
     ]
+  },
+  {
+    "id": "1772015425741",
+    "username": "eriny ayoub",
+    "email": "erinyayoub83@gmail.com",
+    "password": "654337",
+    "interests": [],
+    "scan_history": [],
+    "saved_places": []
   }
 ]
