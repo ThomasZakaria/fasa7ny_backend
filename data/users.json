@@ -123,6 +123,153 @@
         "name": "Cairo Tower",
         "location": "Cairo",
         "img": "https://upload.wikimedia.org/wikipedia/commons/c/ca/Cairo_Skyline_%282020%29.jpg"
+      },
+      {
+        "id": 84,
+        "name": "Dra Abu el Naga",
+        "location": "Luxor",
+        "img": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5a/View_of_Dra%27_Abu_el-Naga_2023.jpg/1920px-View_of_Dra%27_Abu_el-Naga_2023.jpg"
+      }
+    ],
+    "saved_trips": [
+      {
+        "tripId": "trip_1781635102209",
+        "cities": [
+          "Aswan"
+        ],
+        "days": "3",
+        "createdAt": "2026-06-16T18:38:22.209Z",
+        "itinerary": {
+          "days": [
+            {
+              "day": 1,
+              "city": "Aswan",
+              "places": [
+                {
+                  "name": "Nubia Museum",
+                  "category": "Museum",
+                  "time": "Morning",
+                  "price": "Budget",
+                  "reason": "Discover the rich history and culture of Nubia at this world-class museum."
+                },
+                {
+                  "name": "Aswan Museum",
+                  "category": "Museum",
+                  "time": "Afternoon",
+                  "price": "Budget",
+                  "reason": "Explore the fascinating exhibits showcasing the history and archaeology of Aswan."
+                }
+              ]
+            },
+            {
+              "day": 2,
+              "city": "Aswan",
+              "places": [
+                {
+                  "name": "Famine stele",
+                  "category": "General",
+                  "time": "Morning",
+                  "price": "Budget",
+                  "reason": "Learn about the history of the Famine stele, a significant archaeological find in Aswan."
+                },
+                {
+                  "name": "Kiosk of Trajan in Philae",
+                  "category": "General",
+                  "time": "Afternoon",
+                  "price": "Budget",
+                  "reason": "Marvel at the stunning architecture of this ancient Roman kiosk."
+                }
+              ]
+            },
+            {
+              "day": 3,
+              "city": "Aswan",
+              "places": [
+                {
+                  "name": "Monastery of Saint Simeon",
+                  "category": "Church & Monastery",
+                  "time": "Morning",
+                  "price": "Free",
+                  "reason": "Visit this historic monastery and learn about its significance in Aswan's history."
+                }
+              ]
+            }
+          ]
+        },
+        "progress": 0
+      },
+      {
+        "tripId": "trip_1781635744751",
+        "cities": [
+          "Giza"
+        ],
+        "days": "3",
+        "createdAt": "2026-06-16T18:49:04.751Z",
+        "itinerary": {
+          "days": [
+            {
+              "day": 1,
+              "city": "Giza",
+              "places": [
+                {
+                  "name": "Grand Egyptian Museum",
+                  "category": "Museum",
+                  "time": "Morning",
+                  "price": "Budget",
+                  "reason": "Discover the world's largest collection of ancient Egyptian artifacts, including mummies, sarcophagi, and temple reliefs."
+                },
+                {
+                  "name": "Ahmed Shawki Museum",
+                  "category": "Museum",
+                  "time": "Afternoon",
+                  "price": "Budget",
+                  "reason": "Explore the life and works of Egypt's beloved poet, Ahmed Shawki, through a collection of his personal belongings and literary artifacts."
+                }
+              ]
+            },
+            {
+              "day": 2,
+              "city": "Giza",
+              "places": [
+                {
+                  "name": "Collections of the Imhotep Museum in Saqqara",
+                  "category": "Museum",
+                  "time": "Morning",
+                  "price": "Budget",
+                  "reason": "Uncover the secrets of ancient Egypt's greatest architect, Imhotep, through a collection of artifacts and relics from his time."
+                },
+                {
+                  "name": "Great Sphinx of Giza",
+                  "category": "General",
+                  "time": "Afternoon",
+                  "price": "Budget",
+                  "reason": "Marvel at the enigmatic Great Sphinx, a mysterious guardian of the pyramids and one of the most iconic landmarks in Egypt."
+                }
+              ]
+            },
+            {
+              "day": 3,
+              "city": "Giza",
+              "places": [
+                {
+                  "name": "Grand Egyptian Museum",
+                  "category": "Museum",
+                  "time": "Morning",
+                  "price": "Budget",
+                  "reason": "Return to the Grand Egyptian Museum for a second visit to explore more of its vast collection and exhibitions."
+                },
+                {
+                  "name": "Ahmed Shawki Museum",
+                  "category": "Museum",
+                  "time": "Afternoon",
+                  "price": "Budget",
+                  "reason": "Visit the Ahmed Shawki Museum again to delve deeper into the life and works of Egypt's beloved poet."
+                }
+              ]
+            }
+          ]
+        },
+        "progress": 0
       }
     ]
   },

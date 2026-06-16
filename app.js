@@ -11,9 +11,11 @@ const fs = require('fs');
 const path = require('path');
 const Fuse = require('fuse.js');
 require('dotenv').config();
-
+const Groq = require('groq-sdk');
 const app = express();
-
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
+});
 // ==========================================
 // 1. DATABASE & FILE PATHS
 // ==========================================
@@ -397,16 +399,11 @@ app.get('/api/v1/users/:userId', (req, res) => {
   const { password, ...safeData } = user;
   res.json({ status: 'success', data: { user: safeData } });
 });
-
-const PORT = 3000;
-app.listen(PORT, () =>
-  console.log(`🚀 Node.js Backend running on http://127.0.0.1:${PORT}`),
-);
 // ==========================================
-// 7. USER ACTIONS (Save Places & Interests)
+// 7. USER ACTIONS (Save Places, Interests & Trips)
 // ==========================================
 
-// مسار حفظ الأماكن في ملف المستخدم
+// 1. مسار حفظ الأماكن في ملف المستخدم
 app.post('/api/v1/user/save-place', (req, res) => {
   try {
     const { userId, place } = req.body;
@@ -419,12 +416,10 @@ app.post('/api/v1/user/save-place', (req, res) => {
         .json({ status: 'error', message: 'User not found' });
     }
 
-    // التأكد من وجود مصفوفة الأماكن المحفوظة
     if (!users[userIndex].saved_places) {
       users[userIndex].saved_places = [];
     }
 
-    // منع تكرار حفظ نفس المكان
     const alreadySaved = users[userIndex].saved_places.some(
       (p) => p.id === place.id,
     );
@@ -444,7 +439,7 @@ app.post('/api/v1/user/save-place', (req, res) => {
   }
 });
 
-// مسار تحديث اهتمامات المستخدم
+// 2. مسار تحديث اهتمامات المستخدم
 app.post('/api/v1/user/update-interests', (req, res) => {
   try {
     const { userId, interests } = req.body;
@@ -461,3 +456,204 @@ app.post('/api/v1/user/update-interests', (req, res) => {
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
+
+// 3. مسار حفظ الرحلات (AI Trips) للمستخدم (الجديد)
+app.post('/api/v1/user/save-trip', (req, res) => {
+  try {
+    const { userId, itinerary, days, cities } = req.body;
+    const users = loadData(usersPath);
+    const userIndex = users.findIndex((u) => u.id === userId);
+
+    if (userIndex === -1) {
+      return res
+        .status(404)
+        .json({ status: 'error', message: 'User not found' });
+    }
+
+    if (!users[userIndex].saved_trips) {
+      users[userIndex].saved_trips = [];
+    }
+
+    const newTrip = {
+      tripId: 'trip_' + Date.now(),
+      cities: cities,
+      days: days,
+      createdAt: new Date().toISOString(),
+      itinerary: itinerary,
+      progress: 0,
+    };
+
+    users[userIndex].saved_trips.push(newTrip);
+    saveData(usersPath, users);
+
+    res.json({
+      status: 'success',
+      message: 'Trip saved successfully',
+      data: newTrip,
+    });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+app.post('/api/v1/trip-planner', async (req, res) => {
+  try {
+    const { cities, days, interests } = req.body;
+
+    if (!cities || !cities.length || !days) {
+      return res
+        .status(400)
+        .json({ status: 'error', message: 'Please select cities and days' });
+    }
+
+    const allPlaces = loadData(placesPath);
+    const filteredPlaces = allPlaces.filter((place) => {
+      const placeLocation = (place.Location || '').toLowerCase();
+      return cities.some((city) => placeLocation.includes(city.toLowerCase()));
+    });
+
+    if (filteredPlaces.length === 0) {
+      return res
+        .status(404)
+        .json({ status: 'error', message: 'No attractions found.' });
+    }
+
+    // هنا ضفنا السعر (price) للبيانات اللي بنبعتها للـ AI
+    const dynamicAttractionsList = filteredPlaces
+      .map((p) => {
+        return `- Name: "${p['Landmark Name (English)']}" | Category: "${p.category || 'General'}" | Price: "${p.price || 'Free'}"`;
+      })
+      .join('\n');
+
+    const interestText =
+      interests && interests.length > 0
+        ? `The user ONLY wants to visit places related to these categories: [${interests.join(', ')}]. You MUST prioritize places from these categories.`
+        : `Choose the most famous and highly-rated places.`;
+
+    // طلبنا السعر صراحة في الـ Prompt الجديد
+    const prompt = `
+You are a premium AI travel planner for the Fasa7ny app.
+Create an incredible, highly detailed ${days}-day itinerary for ${cities.join(', ')}.
+
+${interestText}
+
+STRICT INSTRUCTIONS:
+1. Use ONLY attractions listed under "ALLOWED PLACES". Do NOT invent places.
+2. Distribute places logically (2-3 per day).
+3. For each place, provide a short, exciting "reason" to visit (1-2 sentences).
+4. Assign a logical time of day (Morning, Afternoon, Evening).
+5. Extract the exact "Price" from the ALLOWED PLACES list.
+6. You MUST return a JSON OBJECT for each place with keys: "name", "category", "time", "price", and "reason".
+
+ALLOWED PLACES:
+${dynamicAttractionsList}
+
+EXPECTED JSON FORMAT:
+{
+  "days": [
+    {
+      "day": 1,
+      "city": "City Name",
+      "places": [
+        {
+          "name": "Exact Landmark Name",
+          "category": "Category",
+          "time": "Morning",
+          "price": "Budget",
+          "reason": "Start your day exploring this incredible ancient wonder..."
+        }
+      ]
+    }
+  ]
+}
+`;
+
+    const completion = await groq.chat.completions.create({
+      model: 'llama-3.1-8b-instant',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+    });
+
+    const structuredItinerary = JSON.parse(
+      completion.choices[0]?.message?.content || '{}',
+    );
+
+    res.json({ status: 'success', data: { itinerary: structuredItinerary } });
+  } catch (err) {
+    console.error('Trip Planner Error:', err);
+    res
+      .status(500)
+      .json({ status: 'error', message: 'Failed to generate itinerary' });
+  }
+});
+// ==========================================
+// 8. AI SMART BUDGET (Gemini Integration)
+// ==========================================
+app.post('/api/v1/ai/budget', async (req, res) => {
+  // بنستقبل تفاصيل أكتر من الفرونت إند دلوقتي
+  const { placeName, location, category, description } = req.body;
+
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error('Gemini API key is missing from .env file');
+    }
+
+    // الـ Prompt الاحترافي مدمج مع تفاصيل المكان
+    const prompt = `Act as an expert Egyptian tour guide. Provide highly accurate, realistic daily costs in EGP (Egyptian Pounds) specifically for the year 2026 for a tourist visiting the following location:
+    - Landmark Name: ${placeName || 'Egypt (General average)'}
+    - City/Region: ${location || 'Egypt'}
+    - Category: ${category || 'Tourist Attraction'}
+    - Context/Details: ${description || 'A popular destination in Egypt'}
+
+    Take into account the 2026 economic context in Egypt (recent fuel price increases, updated Uber/taxi tariffs, and current hospitality rates). 
+
+    Rules:
+    1. Accommodation: Average cost for a standard 3-star hotel room per night in the specified City/Region (typically ranges between 1,200 EGP to 2,500 EGP).
+    2. Food: Average daily cost for 3 standard tourist-friendly meals near this specific landmark (mix of local sit-down spots and casual tourist dining, typically 600 EGP to 1,200 EGP).
+    3. Transport: Average daily cost for 2–3 local Uber or registered taxi rides within that specific area (typically 300 EGP to 600 EGP).
+
+    Do not use outdated pre-inflation rates. Provide a single, realistic average integer for each category based on the requested location context.
+
+    Return ONLY a valid JSON object with keys: accommodation, food, transport. No markdown formatting outside the JSON, no prose.
+    Example: {"accommodation": 1800, "food": 800, "transport": 450}`;
+
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`,
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0, // لضمان دقة وثبات الأرقام في كل مرة
+        },
+      },
+      {
+        headers: { 'Content-Type': 'application/json' },
+      },
+    );
+
+    let responseText = response.data.candidates[0].content.parts[0].text;
+
+    responseText = responseText
+      .replace(/```json/g, '')
+      .replace(/```/g, '')
+      .trim();
+    const budgetData = JSON.parse(responseText);
+
+    res.status(200).json({
+      status: 'success',
+      data: budgetData,
+    });
+  } catch (error) {
+    console.error('Gemini API Error:', error?.response?.data || error.message);
+
+    res.status(200).json({
+      status: 'error_fallback',
+      data: { accommodation: 1500, food: 600, transport: 300 },
+    });
+  }
+});
+const PORT = 3000;
+app.listen(PORT, () =>
+  console.log(`🚀 Node.js Backend running on http://127.0.0.1:${PORT}`),
+);
