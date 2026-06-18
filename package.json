@@ -21,9 +21,6 @@
     "groq-sdk": "^1.2.1",
     "mongoose": "^9.0.1",
     "multer": "^2.2.0",
-    "multer-storage-cloudinary": "^4.0.0",
-    "puppeteer": "^24.37.5",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "multer-storage-cloudinary": "^4.0.0"
   }
 }
