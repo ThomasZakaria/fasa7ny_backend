@@ -333,6 +333,13 @@ app.post('/api/v1/recommend-search', (req, res) => {
         (weights[(a.price || '').toLowerCase()] || 99) -
         (weights[(b.price || '').toLowerCase()] || 99),
     );
+  } else if (sort === 'relevance' || !sort) {
+    // ✨ التعديل السحري: ترتيب الأماكن لضمان ظهور الـ Top Picks المشهورة في أول صفحة Explore دايماً
+    places.sort((a, b) => {
+      const aTop = a.isTopPick === true || a.isTopPick === 'true' ? 1 : 0;
+      const bTop = b.isTopPick === true || b.isTopPick === 'true' ? 1 : 0;
+      return bTop - aTop;
+    });
   }
 
   const start = (page - 1) * limit;
@@ -394,7 +401,6 @@ app.get('/api/v1/places/:id/recommendations', async (req, res) => {
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
-
 /**
  * 6. REVIEWS & CATEGORIES
  */
@@ -423,6 +429,7 @@ app.get('/api/v1/categories', (req, res) => {
   const { city } = req.query;
   const places = loadData(placesPath);
   const grouped = {};
+
   places.forEach((p) => {
     if (
       city &&
@@ -434,6 +441,16 @@ app.get('/api/v1/categories', (req, res) => {
     if (!grouped[cat]) grouped[cat] = [];
     grouped[cat].push(p);
   });
+
+  // ✨ التعديل السحري: ترتيب كل قسم عشان الـ isTopPick يظهر الأول
+  for (const cat in grouped) {
+    grouped[cat].sort((a, b) => {
+      const aTop = a.isTopPick === true || a.isTopPick === 'true' ? 1 : 0;
+      const bTop = b.isTopPick === true || b.isTopPick === 'true' ? 1 : 0;
+      return bTop - aTop; // التوب بيطلع فوق
+    });
+  }
+
   res.json({ status: 'success', data: grouped });
 });
 
