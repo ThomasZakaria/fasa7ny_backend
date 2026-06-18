@@ -75,9 +75,11 @@ function cleanName(name) {
 // ==========================================
 // 4. API ROUTES
 // ==========================================
-
 /**
  * 1. AI DETECTION (Landmark Image Scan)
+ */
+/**
+ * 1. AI DETECTION (Landmark Image Scan) - المتطابق والمربوط يدوياً بنسبة 100%
  */
 app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
   try {
@@ -92,35 +94,90 @@ app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
       contentType: req.file.mimetype,
     });
 
-    // هنعرف رابط الـ AI من بيئة التشغيل (لو موجود) أو نستخدم اللوكال كبديل
     const AI_SERVICE_URL =
       process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
-
-    // وبعدين نستخدم المتغير في الريكويست
     const pythonRes = await axios.post(`${AI_SERVICE_URL}/predict`, form, {
       headers: form.getHeaders(),
     });
 
-    // --- باقي الكود بتاعك زي ما هو ---
+    // الاسم الأصلي القادم من موديل الذكاء الاصطناعي
     const predictedName = pythonRes.data.prediction || '';
-    const cleanedName = cleanName(predictedName);
 
     const places = loadData(placesPath);
-    const fuse = new Fuse(places, {
-      keys: ['Landmark Name (English)', 'Arabic Name'],
-      threshold: 0.5,
-    });
-    const match = fuse.search(cleanedName);
+
+    // الخطوة 1: محاولة المطابقة المباشرة مع الأماكن الـ 71 الجاهزة
+    let exactMatch = places.find((p) => p.ai_class === predictedName);
+
+    // الخطوة 2: الربط اليدوي للـ 34 كلاس المتبقية (أماكن مختلفة المسمى + آثار داخل متاحف)
+    if (!exactMatch) {
+      const manualClassesMap = {
+        // --- 1. أماكن مسمياتها تختلف قليلاً بين الموديل والداتا بيز ---
+        'Karnak Temple': 'Karnak Temple Complex',
+        sphinx: 'Great Sphinx of Giza',
+        'Al-Azhar Mosque': 'Al-Azhar Mosque',
+        'Egyptian Museum, Cairo': 'Egyptian Museum',
+        'Al-Azhar_Park_(Cairo)': 'Al-Azhar Park',
+        'Pompeys Pillar Alexandria': 'Pompeys Pillar Alexandria',
+        'St. Catherine Monastery Mount Sinai':
+          'St. Catherine Monastery Mount Sinai',
+        'St. George Church in Coptic Cairo':
+          'St. George Church in Coptic Cairo',
+        'Hanging Church (St. Virgin Mary Coptic Orthodox Church)':
+          'Hanging Church (St. Virgin Mary Coptic Orthodox Church)',
+        'Mohammed Ali Mosque in cairo citadel': 'Cairo Citadel', // توجيه لقلعة صلاح الدين
+        'Mosque-Madrassa_of_Sultan_Hassan': 'Mosque-Madrassa_of_Sultan_Hassan',
+        'Al-Deir al-Bahary Temple of Queen Hatshepsut':
+          'Al-Deir al-Bahary Temple of Queen Hatshepsut',
+        'Giza Pyramid Complex': 'Giza Pyramid Complex',
+
+        // --- 2. قطع أثرية وتماثيل يتم توجيهها تلقائياً إلى "المتحف المصري بالتحرير" ---
+        'Ahmose I': 'Egyptian Museum',
+        Akhenaten: 'Egyptian Museum',
+        'Amenhotep III and Tiye': 'Egyptian Museum',
+        'Cleopatra VII': 'Egyptian Museum',
+        Djoser: 'Egyptian Museum',
+        'Green Head': 'Egyptian Museum',
+        'Goddess Isis with Her Child': 'Egyptian Museum',
+        Horemheb: 'Egyptian Museum',
+        Khafre: 'Egyptian Museum',
+        'Khufu Statue': 'Egyptian Museum',
+        'King Thutmose III': 'Egyptian Museum',
+        'Narmer (Menes)': 'Egyptian Museum',
+        'Narmer Palette': 'Egyptian Museum',
+        Nefertiti: 'Egyptian Museum',
+        'Queen Hatshepsut': 'Egyptian Museum',
+        'Ramsis II': 'Egyptian Museum',
+        'Ramsis II Red Granite Statue': 'Egyptian Museum',
+        'Sesostris III': 'Egyptian Museum',
+        Sobekneferu: 'Egyptian Museum',
+        'Statue of Tutankhamun': 'Egyptian Museum',
+        'Golden Mask of Tutankhamun': 'Egyptian Museum',
+        'Golden Throne of Tutankhamun': 'Egyptian Museum',
+
+        // --- 3. قطع أثرية يتم توجيهها إلى "المتحف القومي للحضارة المصرية" ---
+        'Mummy of Ramsis II': 'National Museum of Egyptian Civilization',
+      };
+
+      // إذا كان الكلاس المكتشف موجوداً في قاموس الربط اليدوي
+      const dbTargetName = manualClassesMap[predictedName];
+      if (dbTargetName) {
+        exactMatch = places.find(
+          (p) => p['Landmark Name (English)'] === dbTargetName,
+        );
+      }
+    }
 
     res.json({
       status: 'success',
       data: {
-        prediction: cleanedName,
-        details: match.length > 0 ? match[0].item : null,
+        prediction: exactMatch
+          ? exactMatch['Landmark Name (English)']
+          : predictedName,
+        details: exactMatch ? exactMatch : null,
       },
     });
   } catch (err) {
-    console.error('AI Detect Error:', err.message); // ضفتلك السطر ده عشان لو حصل مشكلة تظهر في الكونسول
+    console.error('AI Detect Error:', err.message);
     res.status(500).json({ status: 'error', message: 'AI Service offline' });
   }
 });
