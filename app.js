@@ -605,29 +605,7 @@ app.post('/trip-planner', async (req, res) => {
       .json({ status: 'error', message: 'Failed to generate trip' });
   }
 });
-app.post('/user/save-trip', async (req, res) => {
-  const { userId, itinerary, cities, days } = req.body;
-  const users = loadData(usersPath);
 
-  // منطق بسيط لإضافة الرحلة لملف الـ JSON الخاص بالمستخدمين
-  const userIndex = users.findIndex(
-    (u) => u.id === userId || u.userId === userId,
-  );
-
-  if (userIndex !== -1) {
-    if (!users[userIndex].saved_trips) users[userIndex].saved_trips = [];
-    users[userIndex].saved_trips.push({
-      tripId: Date.now(),
-      itinerary,
-      cities,
-      days,
-    });
-    fs.writeFileSync(usersPath, JSON.stringify(users, null, 2));
-    res.json({ status: 'success' });
-  } else {
-    res.status(404).json({ status: 'error', message: 'User not found' });
-  }
-});
 // ==========================================
 // 8. AI SMART BUDGET (Gemini Integration)
 // ==========================================
