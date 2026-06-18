@@ -1,46 +1,42 @@
-from typing import List, Tuple
 import torch
-import timm
+import json
+from torchvision import models, transforms
 import torch.nn as nn
+from PIL import Image
+import io
 
+# Setup device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def create_model(model_name: str, num_classes: int) -> nn.Module:
-    return timm.create_model(model_name, pretrained=True, num_classes=num_classes)
+# 1. Load class names
+with open('classes.json', 'r', encoding='utf-8') as f:
+    class_names = json.load(f)
 
+# 2. Image Transforms
+data_transforms = transforms.Compose([
+    transforms.Resize(256),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+])
 
-def get_feature_extractor(model: nn.Module) -> nn.Module:
-    class Feat(nn.Module):
-        def __init__(self, m: nn.Module):
-            super().__init__()
-            self.m = m
+# 3. FIX: Use the Correct Model Architecture (EfficientNet-B3)
+model = models.efficientnet_b3(weights=None)
 
-        def forward(self, x):
-            feats = self.m.forward_features(x)
-            if feats.dim() == 4:
-                feats = feats.mean(dim=[2, 3])
-            return feats
+# EfficientNet's classifier has the Linear layer at index 1
+model.classifier[1] = nn.Linear(model.classifier[1].in_features, len(class_names))
 
-    return Feat(model)
+# 4. Load the weights
+model.load_state_dict(torch.load('fasa7ny_ultimate_model.pth', map_location=device))
 
-
-def save_checkpoint(path: str, model: nn.Module, model_name: str, img_size: int, class_names: List[str]) -> None:
-    torch.save(
-        {
-            "state_dict": model.state_dict(),
-            "model_name": model_name,
-            "img_size": img_size,
-            "class_names": class_names,
-        },
-        path,
-    )
-
-
-def load_checkpoint(path: str, device: torch.device) -> Tuple[nn.Module, int, List[str], str]:
-    ckpt = torch.load(path, map_location=device)
-    model_name = ckpt["model_name"]
-    class_names = ckpt["class_names"]
-    img_size = ckpt["img_size"]
-    model = create_model(model_name, num_classes=len(class_names))
-    model.load_state_dict(ckpt["state_dict"])
-    model.to(device).eval()
-    return model, img_size, class_names, model_name
+model = model.to(device)
+model.eval()
+def predict_image(image_bytes):
+    image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+    image_tensor = data_transforms(image).unsqueeze(0).to(device)
+    
+    with torch.no_grad():
+        outputs = model(image_tensor)
+        _, preds = torch.max(outputs, 1)
+        
+    return class_names[int(preds.item())]

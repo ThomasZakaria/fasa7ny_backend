@@ -96,8 +96,11 @@ app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
       headers: form.getHeaders(),
     });
 
-    const topPrediction = pythonRes.data.top_predictions[0];
-    const cleanedName = cleanName(topPrediction.place || '');
+    // --- التعديل هنا ---
+    // الـ API الجديد بيرجع النتيجة مباشرة في pythonRes.data.prediction
+    const predictedName = pythonRes.data.prediction || '';
+    const cleanedName = cleanName(predictedName);
+    // ------------------
 
     const places = loadData(placesPath);
     const fuse = new Fuse(places, {
@@ -114,10 +117,10 @@ app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
       },
     });
   } catch (err) {
+    console.error('AI Detect Error:', err.message); // ضفتلك السطر ده عشان لو حصل مشكلة تظهر في الكونسول
     res.status(500).json({ status: 'error', message: 'AI Service offline' });
   }
 });
-
 /**
  * 2. NEAR ME (GPS Search) - Optimized & Bug Fixed
  */
@@ -230,9 +233,8 @@ app.post('/api/v1/recommend-search', (req, res) => {
     },
   });
 });
-
 /**
- * 4. RECOMMENDATIONS (Nearest 3 + AI Similar 3)
+ * 4. RECOMMENDATIONS (Nearest 3 + Smart Similar 3)
  */
 app.get('/api/v1/places/:id/recommendations', async (req, res) => {
   try {
@@ -244,6 +246,7 @@ app.get('/api/v1/places/:id/recommendations', async (req, res) => {
     if (!currentPlace)
       return res.status(404).json({ message: 'Place not found' });
 
+    // 1. الأقرب جغرافياً (Nearest) - زي ما هي شغالة تمام
     let nearest = [];
     if (currentPlace.Coordinates) {
       const [lat1, lng1] = currentPlace.Coordinates.split(',').map(Number);
@@ -257,25 +260,27 @@ app.get('/api/v1/places/:id/recommendations', async (req, res) => {
         .slice(0, 3);
     }
 
+    // 2. الأماكن المشابهة الذكية (Smart Similar) - التعديل الجديد
     let similar = [];
-    try {
-      const aiRes = await axios.get(
-        `http://127.0.0.1:8000/recommend?place=${encodeURIComponent(currentPlace['Landmark Name (English)'])}&k=3`,
-      );
-      if (aiRes.data && aiRes.data.recommendations) {
-        const fuse = new Fuse(places, {
-          keys: ['Landmark Name (English)'],
-          threshold: 0.6,
-        });
-        similar = aiRes.data.recommendations
-          .map((rec) => {
-            const result = fuse.search(rec.place || rec.class);
-            return result.length > 0 ? result[0].item : null;
-          })
-          .filter((item) => item !== null && item.ID !== currentPlace.ID);
-      }
-    } catch (aiErr) {
-      console.error('AI Bridge Error:', aiErr.message);
+
+    if (currentPlace.category) {
+      // بنفلتر الأماكن عشان نجيب اللي من نفس التصنيف (مثلاً معابد زي معبد حتشبسوت)
+      similar = places
+        .filter(
+          (p) =>
+            p.category === currentPlace.category && p.ID !== currentPlace.ID,
+        )
+        // بنعمل ترتيب عشوائي عشان يعرض أماكن مختلفة كل مرة
+        .sort(() => 0.5 - Math.random())
+        .slice(0, 3);
+    }
+
+    // لو مفيش أماكن من نفس التصنيف، بنجيب أعلى 3 أماكن في التقييم العام
+    if (similar.length === 0) {
+      similar = places
+        .filter((p) => p.ID !== currentPlace.ID)
+        .sort((a, b) => (b.averageRating || 0) - (a.averageRating || 0))
+        .slice(0, 3);
     }
 
     res.json({ status: 'success', data: { nearest, similar } });
@@ -283,7 +288,6 @@ app.get('/api/v1/places/:id/recommendations', async (req, res) => {
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
-
 /**
  * 5. REVIEWS & CATEGORIES
  */

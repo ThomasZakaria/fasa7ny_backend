@@ -1,14 +1,3 @@
 torch
 torchvision
-timm
-albumentations
-opencv-python
-numpy
-pandas
-scikit-learn
-tqdm
-faiss-cpu
-fastapi
-uvicorn
-python-multipart
-pillow
+Pillow

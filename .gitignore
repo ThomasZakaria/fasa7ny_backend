@@ -1,7 +1,30 @@
+# Node.js
 node_modules/
+npm-debug.log
+yarn-error.log
+
+# Environment & Secrets
 .env
+
+# Data & Uploads
 dev-data/
 uploads/
 *.log
-tools
+
+# Custom Tools
+tools/
+
+# Python & AI Service
 ai_service/venv/
+ai_service/backup/
+ai_service\backup\
+__pycache__/
+*.pyc
+
+# AI Models (CRITICAL: Do not push large model files to GitHub)
+*.pt
+*.h5
+
+# OS generated files
+.DS_Store
+Thumbs.db
