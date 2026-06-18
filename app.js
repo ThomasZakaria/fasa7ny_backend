@@ -580,7 +580,8 @@ app.post('/api/v1/user/update-interests', (req, res) => {
 
 app.post('/api/v1/user/save-trip', (req, res) => {
   try {
-    const { userId, itinerary, days, cities } = req.body;
+    // استقبال الـ tripId اختياريًا بجانب البيانات الأخرى لدعم التحديث المباشر
+    const { userId, itinerary, days, cities, tripId } = req.body;
     const users = loadData(usersPath);
     const userIndex = users.findIndex((u) => u.id === userId);
 
@@ -591,6 +592,42 @@ app.post('/api/v1/user/save-trip', (req, res) => {
 
     if (!users[userIndex].saved_trips) users[userIndex].saved_trips = [];
 
+    let existingTripIndex = -1;
+
+    // 1. التحقق أولاً باستخدام الـ tripId إذا كان مرسلاً من الفرونت إيند
+    if (tripId) {
+      existingTripIndex = users[userIndex].saved_trips.findIndex(
+        (t) => t.tripId === tripId,
+      );
+    }
+    // 2. خطة بديلة: إذا لم يرسل tripId، نبحث عن رحلة مطابقة تماماً لنفس المدن وعدد الأيام لمنع التكرار
+    else if (cities && days) {
+      existingTripIndex = users[userIndex].saved_trips.findIndex(
+        (t) =>
+          t.cities.join(',').toLowerCase() === cities.join(',').toLowerCase() &&
+          parseInt(t.days) === parseInt(days),
+      );
+    }
+
+    // ✨ التعديل السحري: إذا تم العثور على الرحلة مسبقاً، نقوم بتحديث الـ itinerary الخاص بها فقط
+    if (existingTripIndex !== -1) {
+      users[userIndex].saved_trips[existingTripIndex].itinerary = itinerary;
+
+      // تحديث الأيام أو المدن احتياطياً لو حصل تعديل
+      if (cities)
+        users[userIndex].saved_trips[existingTripIndex].cities = cities;
+      if (days) users[userIndex].saved_trips[existingTripIndex].days = days;
+
+      saveData(usersPath, users);
+
+      return res.json({
+        status: 'success',
+        message: 'Trip itinerary updated successfully',
+        data: users[userIndex].saved_trips[existingTripIndex],
+      });
+    }
+
+    // 3. إذا كانت رحلة جديدة كلياً ولم نجد أي تطابق، ننشئ كارت رحلة جديد تماماً كما كان في كودك الأصلي
     const newTrip = {
       tripId: 'trip_' + Date.now(),
       cities: cities,
@@ -605,7 +642,7 @@ app.post('/api/v1/user/save-trip', (req, res) => {
 
     res.json({
       status: 'success',
-      message: 'Trip saved successfully',
+      message: 'New trip saved successfully',
       data: newTrip,
     });
   } catch (err) {
