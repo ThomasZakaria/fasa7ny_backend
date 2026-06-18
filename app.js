@@ -12,10 +12,12 @@ const path = require('path');
 const Fuse = require('fuse.js');
 require('dotenv').config();
 const Groq = require('groq-sdk');
+
 const app = express();
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
+
 // ==========================================
 // 1. DATABASE & FILE PATHS
 // ==========================================
@@ -50,7 +52,6 @@ const upload = multer({ storage: multer.memoryStorage() });
 // ==========================================
 // 3. HELPERS (خوارزميات الحساب)
 // ==========================================
-
 function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -75,14 +76,9 @@ function cleanName(name) {
 // ==========================================
 // 4. API ROUTES
 // ==========================================
+
 /**
  * 1. AI DETECTION (Landmark Image Scan)
- */
-/**
- * 1. AI DETECTION (Landmark Image Scan) - المتطابق والمربوط يدوياً بنسبة 100%
- */
-/**
- * 1. AI DETECTION (Landmark Image Scan) - النسخة النهائية المضادة للأخطاء
  */
 app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
   try {
@@ -106,10 +102,10 @@ app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
     const predictedName = pythonRes.data.prediction || '';
     const places = loadData(placesPath);
 
-    // 1. البحث بحقل ai_class (لو موجود)
+    // البحث بحقل ai_class أولاً
     let exactMatch = places.find((p) => p.ai_class === predictedName);
 
-    // 2. 🚀 الحل السحري: لو ملقاش ai_class، يطابق الاسم الإنجليزي مباشرة (هذا سيحل مشكلة Ramesseum فوراً)
+    // مطابقة الاسم الإنجليزي مباشرة كخطة بديلة
     if (!exactMatch) {
       exactMatch = places.find(
         (p) =>
@@ -118,7 +114,7 @@ app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
       );
     }
 
-    // 3. الربط اليدوي للأسماء المختلفة والقطع الأثرية
+    // الخريطة اليدوية للقطع الأثرية والمعالم المتداخلة
     if (!exactMatch) {
       const manualClassesMap = {
         'Karnak Temple': 'Karnak Temple Complex',
@@ -185,11 +181,66 @@ app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
     res.status(500).json({ status: 'error', message: 'AI Service offline' });
   }
 });
+
 /**
- * 2. NEAR ME (GPS Search) - Optimized & Bug Fixed
+ * 2. AI TRIP PLANNER (Groq Itinerary Generation)
+ */
+app.post('/api/v1/trip-planner', async (req, res) => {
+  const { cities, days, interests, manualSelection } = req.body;
+  const allPlaces = loadData(placesPath);
+
+  // الفلترة بناءً على المدن المختارة لتقليل الـ Tokens وزيادة دقة الـ AI
+  const filteredPlaces = allPlaces.filter((p) =>
+    cities
+      .map((c) => c.toLowerCase())
+      .includes((p.Location || '').toLowerCase()),
+  );
+
+  const promptData = filteredPlaces.map((p) => ({
+    name: p['Landmark Name (English)'],
+    category: p.category,
+    price: p.price || 'Moderate',
+    isTopPick: p.isTopPick || false,
+    location: p.Location,
+  }));
+
+  try {
+    const chatCompletion = await groq.chat.completions.create({
+      messages: [
+        {
+          role: 'system',
+          content: `You are an expert Egyptian tour guide.
+                    1. MANUAL SELECTION: MUST include these user-selected places in the itinerary: ${JSON.stringify(manualSelection || [])}.
+                    2. PRIORITIZATION: Prioritize places where 'isTopPick' is true for the rest of the itinerary.
+                    3. PRICE RANGE: For every landmark, add a 'price_range' field (Budget, Moderate, Luxury).
+                    4. FORMAT: Return ONLY a valid JSON object with this structure: { "itinerary": { "days": [ { "day": 1, "city": "...", "places": [ { "name": "...", "time": "...", "reason": "...", "price_range": "..." } ] } ] } }`,
+        },
+        {
+          role: 'user',
+          content: `Please generate a personalized ${days}-day trip itinerary for the following cities: ${cities.join(', ')}.
+                    User interests: ${interests.join(', ')}.
+                    Here is the available landmarks data to choose from: ${JSON.stringify(promptData)}`,
+        },
+      ],
+      model: 'llama-3.3-70b-versatile',
+      response_format: { type: 'json_object' },
+    });
+
+    const itinerary = JSON.parse(chatCompletion.choices[0].message.content);
+    res.status(200).json({ status: 'success', data: itinerary });
+  } catch (error) {
+    console.error('Groq AI Error:', error);
+    res
+      .status(500)
+      .json({ status: 'error', message: 'Failed to generate trip' });
+  }
+});
+
+/**
+ * 3. NEAR ME (GPS Search)
  */
 app.get('/api/v1/places/near-me', (req, res) => {
-  const { lat, lng, distance = 100 } = req.query; // رفعنا المسافة الافتراضية لـ 100 كم
+  const { lat, lng, distance = 100 } = req.query;
 
   if (!lat || !lng) {
     return res
@@ -200,7 +251,6 @@ app.get('/api/v1/places/near-me', (req, res) => {
   const userLat = parseFloat(lat);
   const userLng = parseFloat(lng);
   const maxDist = parseFloat(distance);
-
   const places = loadData(placesPath);
 
   const nearby = places
@@ -208,7 +258,6 @@ app.get('/api/v1/places/near-me', (req, res) => {
       let pLat = NaN,
         pLng = NaN;
 
-      // تحسين قراءة الإحداثيات وتنظيف النص
       if (
         p.Coordinates &&
         typeof p.Coordinates === 'string' &&
@@ -219,7 +268,6 @@ app.get('/api/v1/places/near-me', (req, res) => {
         pLng = parseFloat(parts[1].trim());
       }
 
-      // التحقق من أن الأرقام صالحة (ليست NaN)
       if (!isNaN(pLat) && !isNaN(pLng)) {
         p.distanceAway = getDistance(userLat, userLng, pLat, pLng);
       } else {
@@ -227,9 +275,7 @@ app.get('/api/v1/places/near-me', (req, res) => {
       }
       return p;
     })
-    // فلترة الأماكن التي تقع ضمن النطاق فقط
     .filter((p) => p.distanceAway <= maxDist)
-    // الترتيب من الأقرب للأبعد
     .sort((a, b) => a.distanceAway - b.distanceAway);
 
   res.json({
@@ -238,8 +284,9 @@ app.get('/api/v1/places/near-me', (req, res) => {
     data: { places: nearby.slice(0, 20) },
   });
 });
+
 /**
- * 3. SMART SEARCH (Fuzzy + Filters + Pagination)
+ * 4. SMART SEARCH (Fuzzy + Filters + Pagination)
  */
 app.post('/api/v1/recommend-search', (req, res) => {
   const {
@@ -297,8 +344,9 @@ app.post('/api/v1/recommend-search', (req, res) => {
     },
   });
 });
+
 /**
- * 4. RECOMMENDATIONS (Nearest 3 + Smart Similar 3)
+ * 5. RECOMMENDATIONS (Nearest 3 + Smart Similar 3)
  */
 app.get('/api/v1/places/:id/recommendations', async (req, res) => {
   try {
@@ -310,7 +358,6 @@ app.get('/api/v1/places/:id/recommendations', async (req, res) => {
     if (!currentPlace)
       return res.status(404).json({ message: 'Place not found' });
 
-    // 1. الأقرب جغرافياً (Nearest) - زي ما هي شغالة تمام
     let nearest = [];
     if (currentPlace.Coordinates) {
       const [lat1, lng1] = currentPlace.Coordinates.split(',').map(Number);
@@ -324,22 +371,17 @@ app.get('/api/v1/places/:id/recommendations', async (req, res) => {
         .slice(0, 3);
     }
 
-    // 2. الأماكن المشابهة الذكية (Smart Similar) - التعديل الجديد
     let similar = [];
-
     if (currentPlace.category) {
-      // بنفلتر الأماكن عشان نجيب اللي من نفس التصنيف (مثلاً معابد زي معبد حتشبسوت)
       similar = places
         .filter(
           (p) =>
             p.category === currentPlace.category && p.ID !== currentPlace.ID,
         )
-        // بنعمل ترتيب عشوائي عشان يعرض أماكن مختلفة كل مرة
         .sort(() => 0.5 - Math.random())
         .slice(0, 3);
     }
 
-    // لو مفيش أماكن من نفس التصنيف، بنجيب أعلى 3 أماكن في التقييم العام
     if (similar.length === 0) {
       similar = places
         .filter((p) => p.ID !== currentPlace.ID)
@@ -352,8 +394,9 @@ app.get('/api/v1/places/:id/recommendations', async (req, res) => {
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
+
 /**
- * 5. REVIEWS & CATEGORIES
+ * 6. REVIEWS & CATEGORIES
  */
 app.get('/api/v1/places/:placeId/reviews', (req, res) => {
   const reviews = loadData(reviewsPath);
@@ -389,15 +432,14 @@ app.get('/api/v1/categories', (req, res) => {
       return;
     const cat = p.category || 'General';
     if (!grouped[cat]) grouped[cat] = [];
-    grouped[cat].push(p); // إرسال الكل لدعم صفحة Explore
+    grouped[cat].push(p);
   });
   res.json({ status: 'success', data: grouped });
 });
 
 // ==========================================
-// 6. AUTHENTICATION & USER PROFILE
+// 7. AUTHENTICATION & USER PROFILE
 // ==========================================
-
 app.post('/api/v1/signup', (req, res) => {
   try {
     const { username, email, password } = req.body;
@@ -414,7 +456,7 @@ app.post('/api/v1/signup', (req, res) => {
       id: Date.now().toString(),
       username,
       email,
-      password,
+      password, // تذكير: يفضل تشفيرها مستقبلاً بـ bcryptjs
       interests: [],
       scan_history: [],
       saved_places: [],
@@ -458,7 +500,6 @@ app.post('/api/v1/login', (req, res) => {
   }
 });
 
-// جديد: جلب بيانات البروفايل كاملة
 app.get('/api/v1/users/:userId', (req, res) => {
   const users = loadData(usersPath);
   const user = users.find((u) => u.id === req.params.userId);
@@ -467,26 +508,22 @@ app.get('/api/v1/users/:userId', (req, res) => {
   const { password, ...safeData } = user;
   res.json({ status: 'success', data: { user: safeData } });
 });
-// ==========================================
-// 7. USER ACTIONS (Save Places, Interests & Trips)
-// ==========================================
 
-// 1. مسار حفظ الأماكن في ملف المستخدم
+// ==========================================
+// 8. USER ACTIONS (Save Places, Interests & Trips)
+// ==========================================
 app.post('/api/v1/user/save-place', (req, res) => {
   try {
     const { userId, place } = req.body;
     const users = loadData(usersPath);
     const userIndex = users.findIndex((u) => u.id === userId);
 
-    if (userIndex === -1) {
+    if (userIndex === -1)
       return res
         .status(404)
         .json({ status: 'error', message: 'User not found' });
-    }
 
-    if (!users[userIndex].saved_places) {
-      users[userIndex].saved_places = [];
-    }
+    if (!users[userIndex].saved_places) users[userIndex].saved_places = [];
 
     const alreadySaved = users[userIndex].saved_places.some(
       (p) => p.id === place.id,
@@ -507,7 +544,6 @@ app.post('/api/v1/user/save-place', (req, res) => {
   }
 });
 
-// 2. مسار تحديث اهتمامات المستخدم
 app.post('/api/v1/user/update-interests', (req, res) => {
   try {
     const { userId, interests } = req.body;
@@ -525,22 +561,18 @@ app.post('/api/v1/user/update-interests', (req, res) => {
   }
 });
 
-// 3. مسار حفظ الرحلات (AI Trips) للمستخدم (الجديد)
 app.post('/api/v1/user/save-trip', (req, res) => {
   try {
     const { userId, itinerary, days, cities } = req.body;
     const users = loadData(usersPath);
     const userIndex = users.findIndex((u) => u.id === userId);
 
-    if (userIndex === -1) {
+    if (userIndex === -1)
       return res
         .status(404)
         .json({ status: 'error', message: 'User not found' });
-    }
 
-    if (!users[userIndex].saved_trips) {
-      users[userIndex].saved_trips = [];
-    }
+    if (!users[userIndex].saved_trips) users[userIndex].saved_trips = [];
 
     const newTrip = {
       tripId: 'trip_' + Date.now(),
@@ -563,63 +595,17 @@ app.post('/api/v1/user/save-trip', (req, res) => {
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
-app.post('/trip-planner', async (req, res) => {
-  const { cities, days, interests, manualSelection } = req.body;
-  const allPlaces = loadData(placesPath);
-
-  // تجهيز الداتا للـ AI: بنبعت أهم بيانات عشان نقتصد في الـ Token usage
-  const promptData = allPlaces.map((p) => ({
-    name: p['Landmark Name (English)'],
-    category: p.category,
-    price: p.price || 'Moderate',
-    isTopPick: p.isTopPick || false,
-    location: p.Location,
-  }));
-
-  try {
-    const chatCompletion = await groq.chat.completions.create({
-      messages: [
-        {
-          role: 'system',
-          content: `You are an expert Egyptian tour guide.
-                    1. MANUAL SELECTION: MUST include these user-selected places in the itinerary: ${JSON.stringify(manualSelection || [])}.
-                    2. PRIORITIZATION: Prioritize places where 'isTopPick' is true for the rest of the itinerary.
-                    3. PRICE RANGE: For every landmark, add a 'price_range' field (Budget, Moderate, Luxury).
-                    4. FORMAT: Return ONLY a valid JSON object with this structure: { "itinerary": { "days": [ { "day": 1, "city": "...", "places": [ { "name": "...", "time": "...", "reason": "...", "price_range": "..." } ] } ] } }`,
-        },
-        {
-          role: 'user',
-          content: `Plan a ${days}-day trip to ${cities.join(', ')}. Interests: ${interests.join(', ')}. Database: ${JSON.stringify(promptData.slice(0, 100))}`,
-        },
-      ],
-      model: 'llama-3.3-70b-versatile',
-      response_format: { type: 'json_object' },
-    });
-
-    const itinerary = JSON.parse(chatCompletion.choices[0].message.content);
-    res.status(200).json({ status: 'success', data: itinerary });
-  } catch (error) {
-    console.error('Groq AI Error:', error);
-    res
-      .status(500)
-      .json({ status: 'error', message: 'Failed to generate trip' });
-  }
-});
 
 // ==========================================
-// 8. AI SMART BUDGET (Gemini Integration)
+// 9. AI SMART BUDGET (Gemini Integration)
 // ==========================================
 app.post('/api/v1/ai/budget', async (req, res) => {
-  // بنستقبل تفاصيل أكتر من الفرونت إند دلوقتي
   const { placeName, location, category, description } = req.body;
 
   try {
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error('Gemini API key is missing from .env file');
-    }
+    if (!apiKey) throw new Error('Gemini API key is missing from .env file');
 
-    // الـ Prompt الاحترافي مدمج مع تفاصيل المكان
     const prompt = `Act as an expert Egyptian tour guide. Provide highly accurate, realistic daily costs in EGP (Egyptian Pounds) specifically for the year 2026 for a tourist visiting the following location:
     - Landmark Name: ${placeName || 'Egypt (General average)'}
     - City/Region: ${location || 'Egypt'}
@@ -633,40 +619,30 @@ app.post('/api/v1/ai/budget', async (req, res) => {
     2. Food: Average daily cost for 3 standard tourist-friendly meals near this specific landmark (mix of local sit-down spots and casual tourist dining, typically 600 EGP to 1,200 EGP).
     3. Transport: Average daily cost for 2–3 local Uber or registered taxi rides within that specific area (typically 300 EGP to 600 EGP).
 
-    Do not use outdated pre-inflation rates. Provide a single, realistic average integer for each category based on the requested location context.
-
-    Return ONLY a valid JSON object with keys: accommodation, food, transport. No markdown formatting outside the JSON, no prose.
-    Example: {"accommodation": 1800, "food": 800, "transport": 450}`;
+    Return ONLY a valid JSON object with keys: accommodation, food, transport. No markdown formatting outside the JSON, no prose.`;
 
     const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
       {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           responseMimeType: 'application/json',
-          temperature: 0, // لضمان دقة وثبات الأرقام في كل مرة
+          temperature: 0,
         },
       },
-      {
-        headers: { 'Content-Type': 'application/json' },
-      },
+      { headers: { 'Content-Type': 'application/json' } },
     );
 
     let responseText = response.data.candidates[0].content.parts[0].text;
-
     responseText = responseText
       .replace(/```json/g, '')
       .replace(/```/g, '')
       .trim();
     const budgetData = JSON.parse(responseText);
 
-    res.status(200).json({
-      status: 'success',
-      data: budgetData,
-    });
+    res.status(200).json({ status: 'success', data: budgetData });
   } catch (error) {
     console.error('Gemini API Error:', error?.response?.data || error.message);
-
     res.status(200).json({
       status: 'error_fallback',
       data: { accommodation: 1500, food: 600, transport: 300 },
