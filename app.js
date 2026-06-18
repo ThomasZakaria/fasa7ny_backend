@@ -81,6 +81,9 @@ function cleanName(name) {
 /**
  * 1. AI DETECTION (Landmark Image Scan) - المتطابق والمربوط يدوياً بنسبة 100%
  */
+/**
+ * 1. AI DETECTION (Landmark Image Scan) - النسخة النهائية المضادة للأخطاء
+ */
 app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
   try {
     if (!req.file)
@@ -100,18 +103,24 @@ app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
       headers: form.getHeaders(),
     });
 
-    // الاسم الأصلي القادم من موديل الذكاء الاصطناعي
     const predictedName = pythonRes.data.prediction || '';
-
     const places = loadData(placesPath);
 
-    // الخطوة 1: محاولة المطابقة المباشرة مع الأماكن الـ 71 الجاهزة
+    // 1. البحث بحقل ai_class (لو موجود)
     let exactMatch = places.find((p) => p.ai_class === predictedName);
 
-    // الخطوة 2: الربط اليدوي للـ 34 كلاس المتبقية (أماكن مختلفة المسمى + آثار داخل متاحف)
+    // 2. 🚀 الحل السحري: لو ملقاش ai_class، يطابق الاسم الإنجليزي مباشرة (هذا سيحل مشكلة Ramesseum فوراً)
+    if (!exactMatch) {
+      exactMatch = places.find(
+        (p) =>
+          p['Landmark Name (English)'] === predictedName ||
+          p['Landmark Name (English)'] === predictedName.replace(/_/g, ' '),
+      );
+    }
+
+    // 3. الربط اليدوي للأسماء المختلفة والقطع الأثرية
     if (!exactMatch) {
       const manualClassesMap = {
-        // --- 1. أماكن مسمياتها تختلف قليلاً بين الموديل والداتا بيز ---
         'Karnak Temple': 'Karnak Temple Complex',
         sphinx: 'Great Sphinx of Giza',
         'Al-Azhar Mosque': 'Al-Azhar Mosque',
@@ -124,13 +133,11 @@ app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
           'St. George Church in Coptic Cairo',
         'Hanging Church (St. Virgin Mary Coptic Orthodox Church)':
           'Hanging Church (St. Virgin Mary Coptic Orthodox Church)',
-        'Mohammed Ali Mosque in cairo citadel': 'Cairo Citadel', // توجيه لقلعة صلاح الدين
+        'Mohammed Ali Mosque in cairo citadel': 'Cairo Citadel',
         'Mosque-Madrassa_of_Sultan_Hassan': 'Mosque-Madrassa_of_Sultan_Hassan',
         'Al-Deir al-Bahary Temple of Queen Hatshepsut':
           'Al-Deir al-Bahary Temple of Queen Hatshepsut',
         'Giza Pyramid Complex': 'Giza Pyramid Complex',
-
-        // --- 2. قطع أثرية وتماثيل يتم توجيهها تلقائياً إلى "المتحف المصري بالتحرير" ---
         'Ahmose I': 'Egyptian Museum',
         Akhenaten: 'Egyptian Museum',
         'Amenhotep III and Tiye': 'Egyptian Museum',
@@ -153,12 +160,9 @@ app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
         'Statue of Tutankhamun': 'Egyptian Museum',
         'Golden Mask of Tutankhamun': 'Egyptian Museum',
         'Golden Throne of Tutankhamun': 'Egyptian Museum',
-
-        // --- 3. قطع أثرية يتم توجيهها إلى "المتحف القومي للحضارة المصرية" ---
         'Mummy of Ramsis II': 'National Museum of Egyptian Civilization',
       };
 
-      // إذا كان الكلاس المكتشف موجوداً في قاموس الربط اليدوي
       const dbTargetName = manualClassesMap[predictedName];
       if (dbTargetName) {
         exactMatch = places.find(
