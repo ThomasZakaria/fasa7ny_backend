@@ -563,95 +563,69 @@ app.post('/api/v1/user/save-trip', (req, res) => {
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
-app.post('/api/v1/trip-planner', async (req, res) => {
+app.post('/trip-planner', async (req, res) => {
+  const { cities, days, interests, manualSelection } = req.body;
+  const allPlaces = loadData(placesPath);
+
+  // تجهيز الداتا للـ AI: بنبعت أهم بيانات عشان نقتصد في الـ Token usage
+  const promptData = allPlaces.map((p) => ({
+    name: p['Landmark Name (English)'],
+    category: p.category,
+    price: p.price || 'Moderate',
+    isTopPick: p.isTopPick || false,
+    location: p.Location,
+  }));
+
   try {
-    const { cities, days, interests } = req.body;
-
-    if (!cities || !cities.length || !days) {
-      return res
-        .status(400)
-        .json({ status: 'error', message: 'Please select cities and days' });
-    }
-
-    const allPlaces = loadData(placesPath);
-    const filteredPlaces = allPlaces.filter((place) => {
-      const placeLocation = (place.Location || '').toLowerCase();
-      return cities.some((city) => placeLocation.includes(city.toLowerCase()));
-    });
-
-    if (filteredPlaces.length === 0) {
-      return res
-        .status(404)
-        .json({ status: 'error', message: 'No attractions found.' });
-    }
-
-    // هنا ضفنا السعر (price) للبيانات اللي بنبعتها للـ AI
-    const dynamicAttractionsList = filteredPlaces
-      .map((p) => {
-        return `- Name: "${p['Landmark Name (English)']}" | Category: "${p.category || 'General'}" | Price: "${p.price || 'Free'}"`;
-      })
-      .join('\n');
-
-    const interestText =
-      interests && interests.length > 0
-        ? `The user ONLY wants to visit places related to these categories: [${interests.join(', ')}]. You MUST prioritize places from these categories.`
-        : `Choose the most famous and highly-rated places.`;
-
-    // طلبنا السعر صراحة في الـ Prompt الجديد
-    const prompt = `
-You are a premium AI travel planner for the Fasa7ny app.
-Create an incredible, highly detailed ${days}-day itinerary for ${cities.join(', ')}.
-
-${interestText}
-
-STRICT INSTRUCTIONS:
-1. Use ONLY attractions listed under "ALLOWED PLACES". Do NOT invent places.
-2. Distribute places logically (2-3 per day).
-3. For each place, provide a short, exciting "reason" to visit (1-2 sentences).
-4. Assign a logical time of day (Morning, Afternoon, Evening).
-5. Extract the exact "Price" from the ALLOWED PLACES list.
-6. You MUST return a JSON OBJECT for each place with keys: "name", "category", "time", "price", and "reason".
-
-ALLOWED PLACES:
-${dynamicAttractionsList}
-
-EXPECTED JSON FORMAT:
-{
-  "days": [
-    {
-      "day": 1,
-      "city": "City Name",
-      "places": [
+    const chatCompletion = await groq.chat.completions.create({
+      messages: [
         {
-          "name": "Exact Landmark Name",
-          "category": "Category",
-          "time": "Morning",
-          "price": "Budget",
-          "reason": "Start your day exploring this incredible ancient wonder..."
-        }
-      ]
-    }
-  ]
-}
-`;
-
-    const completion = await groq.chat.completions.create({
-      model: 'llama-3.1-8b-instant',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.2,
+          role: 'system',
+          content: `You are an expert Egyptian tour guide.
+                    1. MANUAL SELECTION: MUST include these user-selected places in the itinerary: ${JSON.stringify(manualSelection || [])}.
+                    2. PRIORITIZATION: Prioritize places where 'isTopPick' is true for the rest of the itinerary.
+                    3. PRICE RANGE: For every landmark, add a 'price_range' field (Budget, Moderate, Luxury).
+                    4. FORMAT: Return ONLY a valid JSON object with this structure: { "itinerary": { "days": [ { "day": 1, "city": "...", "places": [ { "name": "...", "time": "...", "reason": "...", "price_range": "..." } ] } ] } }`,
+        },
+        {
+          role: 'user',
+          content: `Plan a ${days}-day trip to ${cities.join(', ')}. Interests: ${interests.join(', ')}. Database: ${JSON.stringify(promptData.slice(0, 100))}`,
+        },
+      ],
+      model: 'llama-3.3-70b-versatile',
       response_format: { type: 'json_object' },
     });
 
-    const structuredItinerary = JSON.parse(
-      completion.choices[0]?.message?.content || '{}',
-    );
-
-    res.json({ status: 'success', data: { itinerary: structuredItinerary } });
-  } catch (err) {
-    console.error('Trip Planner Error:', err);
+    const itinerary = JSON.parse(chatCompletion.choices[0].message.content);
+    res.status(200).json({ status: 'success', data: itinerary });
+  } catch (error) {
+    console.error('Groq AI Error:', error);
     res
       .status(500)
-      .json({ status: 'error', message: 'Failed to generate itinerary' });
+      .json({ status: 'error', message: 'Failed to generate trip' });
+  }
+});
+app.post('/user/save-trip', async (req, res) => {
+  const { userId, itinerary, cities, days } = req.body;
+  const users = loadData(usersPath);
+
+  // منطق بسيط لإضافة الرحلة لملف الـ JSON الخاص بالمستخدمين
+  const userIndex = users.findIndex(
+    (u) => u.id === userId || u.userId === userId,
+  );
+
+  if (userIndex !== -1) {
+    if (!users[userIndex].saved_trips) users[userIndex].saved_trips = [];
+    users[userIndex].saved_trips.push({
+      tripId: Date.now(),
+      itinerary,
+      cities,
+      days,
+    });
+    fs.writeFileSync(usersPath, JSON.stringify(users, null, 2));
+    res.json({ status: 'success' });
+  } else {
+    res.status(404).json({ status: 'error', message: 'User not found' });
   }
 });
 // ==========================================
