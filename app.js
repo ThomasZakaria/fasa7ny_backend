@@ -92,15 +92,18 @@ app.post('/api/v1/detect', upload.single('image'), async (req, res) => {
       contentType: req.file.mimetype,
     });
 
-    const pythonRes = await axios.post('http://127.0.0.1:8000/predict', form, {
+    // هنعرف رابط الـ AI من بيئة التشغيل (لو موجود) أو نستخدم اللوكال كبديل
+    const AI_SERVICE_URL =
+      process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
+
+    // وبعدين نستخدم المتغير في الريكويست
+    const pythonRes = await axios.post(`${AI_SERVICE_URL}/predict`, form, {
       headers: form.getHeaders(),
     });
 
-    // --- التعديل هنا ---
-    // الـ API الجديد بيرجع النتيجة مباشرة في pythonRes.data.prediction
+    // --- باقي الكود بتاعك زي ما هو ---
     const predictedName = pythonRes.data.prediction || '';
     const cleanedName = cleanName(predictedName);
-    // ------------------
 
     const places = loadData(placesPath);
     const fuse = new Fuse(places, {
