@@ -651,7 +651,7 @@ app.post('/api/v1/user/save-trip', (req, res) => {
 });
 
 // ==========================================
-// 9. AI SMART BUDGET (Gemini Integration)
+// 9. AI SMART BUDGET
 // ==========================================
 app.post('/api/v1/ai/budget', async (req, res) => {
   const { placeName, location, category, description } = req.body;

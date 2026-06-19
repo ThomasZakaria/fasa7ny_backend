@@ -28,3 +28,17 @@ __pycache__/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+.venv/
+venv/
+env/
+
+__pycache__/
+*.pyc
+
+node_modules/
+
+dist/
+build/
+
+.env
